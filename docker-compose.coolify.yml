@@ -254,8 +254,9 @@ services:
     expose:
       - "80"
     environment:
-      # Set this in Coolify to your domain, e.g. https://plane.example.com
-      SERVICE_FQDN_PROXY_80: ${SITE_FQDN}
+      # Coolify magic var: route this FQDN to the proxy on container port 80.
+      # MUST be a bare hostname (no https://). Change this to your own domain.
+      SERVICE_FQDN_PROXY_80: nttdata.seansyonetim.com
       SITE_ADDRESS: ":80"
       FILE_SIZE_LIMIT: ${FILE_SIZE_LIMIT:-5242880}
       BUCKET_NAME: ${AWS_S3_BUCKET_NAME:-uploads}
