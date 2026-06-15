@@ -1,0 +1,46 @@
+# workflow_templates/data_migration.yaml
+# Data Migration activity workflow.
+
+template_name: data_migration
+
+applies_to: []  # Populated via Settings → Issue Type Mapping
+
+phases:
+  - order: 1
+    name: "Extraction"
+    required_roles:
+      - ABAP
+      - Functional
+    effort_factor: 0.15
+    is_blocking: true
+
+  - order: 2
+    name: "Transformation"
+    required_roles:
+      - ABAP
+    effort_factor: 0.20
+    is_blocking: true
+
+  - order: 3
+    name: "Cleansing"
+    required_roles:
+      - Functional
+      - Client
+    effort_factor: 0.25
+    is_blocking: true
+
+  - order: 4
+    name: "Validation"
+    required_roles:
+      - ABAP
+      - Functional
+    effort_factor: 0.25
+    is_blocking: true
+
+  - order: 5
+    name: "Transfer"
+    required_roles:
+      - ABAP
+      - Basis
+    effort_factor: 0.15
+    is_blocking: true

@@ -1,0 +1,30 @@
+FROM python:3.12.10-alpine
+
+# set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# Update system packages for security
+RUN apk update && apk upgrade
+
+WORKDIR /code
+
+COPY requirements.txt ./
+RUN pip install -r requirements.txt --compile --no-cache-dir
+
+COPY wsgi.py run.py ./
+COPY app app/
+COPY workflow_templates workflow_templates/
+
+# SQLite database lives on a volume; see DB_PATH below
+RUN mkdir -p /data
+ENV DB_PATH=/data/optimization.db
+ENV URL_PREFIX=/migrate
+
+EXPOSE 5050
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s \
+    CMD python -c "import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:5050' + os.environ.get('URL_PREFIX', '') + '/health')"
+
+CMD ["gunicorn", "--bind", "0.0.0.0:5050", "--workers", "2", "--access-logfile", "-", "wsgi:application"]

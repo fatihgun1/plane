@@ -1,0 +1,777 @@
+{% extends "base.html" %}
+{% block title %}Consultants — NTT-PMO Optimization Tool{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Consultants</h1>
+  <p class="sub">Manage consultant profiles and availability windows.</p>
+</div>
+
+<!-- ── Consultants Table ─────────────────────────────────────────── -->
+<section class="card" id="section-consultants">
+  <div class="card-header">
+    <h2>Consultant Roster</h2>
+    <div class="card-actions">
+      <button class="btn btn-secondary" id="btn-refresh-consultants">↺ Refresh</button>
+      <button class="btn btn-primary" id="btn-add-consultant">+ Add Consultant</button>
+    </div>
+  </div>
+  <div class="table-wrap">
+    <table id="consultants-table" class="data-table">
+      <thead>
+        <tr>
+          <th class="sortable" data-col="name">Name ↕</th>
+          <th class="sortable" data-col="role">Role ↕</th>
+          <th class="sortable" data-col="level">Level ↕</th>
+          <th class="sortable" data-col="stream">Stream ↕</th>
+          <th class="sortable" data-col="active">Active ↕</th>
+          <th>Availability</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="consultants-tbody">
+        <tr><td colspan="7" class="empty-row">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="table-footer"><span id="consultants-count">—</span></div>
+</section>
+
+<!-- ── Availability Windows ──────────────────────────────────────── -->
+<section class="card hidden" id="section-availability">
+  <div class="card-header">
+    <h2>Availability — <span id="avail-consultant-name">—</span></h2>
+    <div class="card-actions">
+      <button class="btn btn-secondary" id="btn-close-avail">✕ Close</button>
+      <button class="btn btn-primary"   id="btn-add-avail">+ Add Window</button>
+    </div>
+  </div>
+  <div class="table-wrap">
+    <table id="avail-table" class="data-table">
+      <thead>
+        <tr><th>From</th><th>To</th><th>Capacity %</th><th>Note</th><th>Actions</th></tr>
+      </thead>
+      <tbody id="avail-tbody">
+        <tr><td colspan="5" class="empty-row">Select a consultant above.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ── Add/Edit Consultant Modal ─────────────────────────────────── -->
+<div id="modal-consultant" class="modal hidden" role="dialog" aria-modal="true">
+  <div class="modal-box">
+    <h3 id="modal-consultant-title">Add Consultant</h3>
+    <input type="hidden" id="consultant-id" value="" />
+    <label class="field-label">Name *
+      <input type="text" id="consultant-name" placeholder="e.g. Alice Smith" />
+    </label>
+    <label class="field-label">Role *
+      <input type="text" id="consultant-role" placeholder="e.g. ABAP, Functional" />
+    </label>
+    <label class="field-label">Experience Level
+      <select id="consultant-level">
+        <option value="Consultant">Consultant</option>
+        <option value="Senior Consultant">Senior Consultant</option>
+        <option value="Expert Consultant">Expert Consultant</option>
+      </select>
+    </label>
+    <label class="field-label">Stream
+      <input type="text" id="consultant-stream" placeholder="e.g. Finance, Sales" />
+    </label>
+    <label class="field-check">
+      <input type="checkbox" id="consultant-active" checked /> Active
+    </label>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" id="modal-consultant-cancel">Cancel</button>
+      <button class="btn btn-primary"   id="modal-consultant-confirm">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Flexible Availability Modal ───────────────────────────────── -->
+<div id="modal-avail" class="modal hidden" role="dialog" aria-modal="true">
+  <div class="modal-box" style="max-width:600px;max-height:90vh;overflow-y:auto">
+    <h3 id="modal-avail-title">Add Availability Plan</h3>
+    <input type="hidden" id="avail-id" value="" />
+    <input type="hidden" id="avail-consultant-id" value="" />
+
+    <!-- Date range (all modes) -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:.75rem;margin-bottom:.75rem">
+      <label class="field-label">From *
+        <input type="date" id="avail-from" />
+      </label>
+      <label class="field-label">To *
+        <input type="date" id="avail-to" />
+      </label>
+    </div>
+
+    <!-- Mode selector -->
+    <div style="margin-bottom:.75rem">
+      <span style="font-size:.82rem;font-weight:600;color:var(--text-muted);display:block;margin-bottom:.4rem">Plan Type</span>
+      <div style="display:flex;gap:0;flex-wrap:wrap">
+        <button class="avail-mode-btn active" data-mode="fulltime"   style="flex:1">✅ Full-time</button>
+        <button class="avail-mode-btn"        data-mode="days-week"  style="flex:1">📅 N days/week</button>
+        <button class="avail-mode-btn"        data-mode="fixed-days" style="flex:1">📌 Fixed weekdays</button>
+        <button class="avail-mode-btn"        data-mode="calendar"   style="flex:1">🗓 Custom days</button>
+      </div>
+    </div>
+
+    <!-- Mode panels -->
+
+    <!-- Full-time -->
+    <div class="avail-mode-panel" id="panel-fulltime">
+      <p class="hint" style="padding:.5rem;background:#f0f8f0;border-radius:4px;border-left:3px solid var(--success)">
+        Consultant is available 100% full-time for the entire date range.
+        Creates a single availability window.
+      </p>
+    </div>
+
+    <!-- N days per week -->
+    <div class="avail-mode-panel hidden" id="panel-days-week">
+      <label class="field-label" style="margin-bottom:.5rem">
+        Working days per week
+        <div style="display:flex;align-items:center;gap:.75rem;margin-top:.3rem">
+          <input type="range" id="days-per-week" min="1" max="5" value="3"
+                 style="flex:1;accent-color:var(--navy)" />
+          <span id="days-per-week-val" style="font-weight:700;font-size:1.1rem;min-width:2rem;text-align:center">3</span>
+          <span class="hint">days</span>
+        </div>
+      </label>
+      <p class="hint" style="margin-top:.25rem">
+        Capacity will be set to <strong id="days-week-pct">60%</strong>
+        (days ÷ 5 working days). Creates one window covering the full range.
+      </p>
+    </div>
+
+    <!-- Fixed weekdays -->
+    <div class="avail-mode-panel hidden" id="panel-fixed-days">
+      <span style="font-size:.82rem;font-weight:600;display:block;margin-bottom:.5rem">Select working days</span>
+      <div style="display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:.5rem">
+        <label class="day-toggle"><input type="checkbox" value="0" /> Mon</label>
+        <label class="day-toggle"><input type="checkbox" value="1" /> Tue</label>
+        <label class="day-toggle"><input type="checkbox" value="2" /> Wed</label>
+        <label class="day-toggle"><input type="checkbox" value="3" /> Thu</label>
+        <label class="day-toggle"><input type="checkbox" value="4" /> Fri</label>
+      </div>
+      <p class="hint">Selected: <strong id="fixed-days-count">0</strong> days → capacity
+        <strong id="fixed-days-pct">0%</strong>.
+        Creates one window with that capacity %.
+      </p>
+    </div>
+
+    <!-- Custom calendar -->
+    <div class="avail-mode-panel hidden" id="panel-calendar">
+      <p class="hint" style="margin-bottom:.5rem">
+        Click individual days to mark as available. Navigate months with ◀ ▶.
+        Selected days are saved as individual availability entries.
+      </p>
+      <div id="cal-nav" style="display:flex;align-items:center;gap:.5rem;margin-bottom:.5rem">
+        <button class="btn btn-sm btn-secondary" id="cal-prev">◀</button>
+        <span id="cal-month-label" style="flex:1;text-align:center;font-weight:600"></span>
+        <button class="btn btn-sm btn-secondary" id="cal-next">▶</button>
+        <button class="btn btn-sm btn-secondary" id="cal-add-month">+ Month</button>
+      </div>
+      <div id="cal-grids" style="display:flex;flex-wrap:wrap;gap:1rem"></div>
+      <p class="hint" style="margin-top:.5rem">
+        <strong id="cal-selected-count">0</strong> days selected.
+      </p>
+    </div>
+
+    <!-- Note (all modes) -->
+    <label class="field-label" style="margin-top:.75rem">Note
+      <input type="text" id="avail-note" placeholder="e.g. Part-time, leave…" />
+    </label>
+
+    <!-- Preview -->
+    <div id="avail-preview" class="hidden"
+         style="margin-top:.75rem;padding:.65rem;background:#f0f4fa;border-radius:4px;font-size:.8rem;color:var(--text-muted)">
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn btn-secondary" id="modal-avail-preview-btn">👁 Preview</button>
+      <button class="btn btn-secondary" id="modal-avail-cancel">Cancel</button>
+      <button class="btn btn-primary"   id="modal-avail-confirm">💾 Save</button>
+    </div>
+  </div>
+</div>
+
+<div id="modal-backdrop" class="modal-backdrop hidden"></div>
+{% endblock %}
+
+{% block extra_scripts %}
+<style>
+.avail-mode-btn {
+  padding:.45rem .6rem;
+  border:1px solid var(--border);
+  background:#fff;
+  cursor:pointer;
+  font-size:.78rem;
+  color:var(--text-muted);
+  transition:background .12s,color .12s;
+  border-right:none;
+  white-space:nowrap;
+}
+.avail-mode-btn:last-child { border-right:1px solid var(--border); border-radius:0 var(--radius) var(--radius) 0; }
+.avail-mode-btn:first-child { border-radius:var(--radius) 0 0 var(--radius); }
+.avail-mode-btn.active { background:var(--navy); color:#fff; border-color:var(--navy); }
+
+.day-toggle {
+  display:flex; align-items:center; gap:.3rem;
+  padding:.3rem .7rem;
+  border:1px solid var(--border);
+  border-radius:4px;
+  cursor:pointer;
+  font-size:.82rem;
+  user-select:none;
+  background:#fff;
+  transition:background .12s;
+}
+.day-toggle:has(input:checked) { background:var(--navy); color:#fff; border-color:var(--navy); }
+
+/* Mini calendar */
+.mini-cal { min-width:200px; }
+.mini-cal-header { text-align:center; font-weight:600; font-size:.82rem; margin-bottom:.3rem; }
+.mini-cal-grid { display:grid; grid-template-columns:repeat(7,1fr); gap:2px; }
+.mini-cal-dow  { text-align:center; font-size:.68rem; color:var(--text-muted); font-weight:600; padding:2px 0; }
+.mini-cal-day  {
+  text-align:center; font-size:.75rem; padding:3px 2px;
+  border-radius:3px; cursor:pointer; border:1px solid transparent;
+  transition:background .1s;
+}
+.mini-cal-day:hover   { background:#e0e7ff; }
+.mini-cal-day.selected{ background:var(--navy); color:#fff; }
+.mini-cal-day.empty   { cursor:default; }
+.mini-cal-day.weekend { color:var(--text-muted); }
+.mini-cal-day.out-range { opacity:.35; cursor:default; }
+
+/* Availability summary cell */
+.avail-summary-cell { font-size:.75rem; color:var(--text-muted); max-width:220px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+/* Sortable header hover */
+th.sortable:hover { background:#dde3f5; }
+</style>
+<script>
+(function () {
+  "use strict";
+
+  const API = {
+    list:   () => fetch("/api/consultants").then(r => r.json()),
+    get:    (id) => fetch(`/api/consultants/${id}`).then(r => r.json()),
+    create: (d) => fetch("/api/consultants", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(d) }).then(r => r.json()),
+    update: (id, d) => fetch(`/api/consultants/${id}`, { method:"PUT", headers:{"Content-Type":"application/json"}, body:JSON.stringify(d) }).then(r => r.json()),
+    del:    (id) => fetch(`/api/consultants/${id}`, { method:"DELETE" }).then(r => r.json()),
+    avail: {
+      list:   (cid) => fetch(`/api/consultants/${cid}/availability`).then(r => r.json()),
+      create: (cid, d) => fetch(`/api/consultants/${cid}/availability`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(d) }).then(r => r.json()),
+      update: (cid, aid, d) => fetch(`/api/consultants/${cid}/availability/${aid}`, { method:"PUT", headers:{"Content-Type":"application/json"}, body:JSON.stringify(d) }).then(r => r.json()),
+      del:    (cid, aid) => fetch(`/api/consultants/${cid}/availability/${aid}`, { method:"DELETE" }).then(r => r.json()),
+    }
+  };
+
+  let _activeConsultantId = null;
+  let _currentMode = "fulltime";
+  let _allData = [];         // full consultant list
+  let _sortCol = "name";     // current sort column
+  let _sortAsc = true;       // sort direction
+  let _availSummary = {};    // { consultantId: summaryText }
+
+  /* ── Sortable header clicks ── */
+  document.querySelectorAll("th.sortable").forEach(th => {
+    th.style.cursor = "pointer";
+    th.addEventListener("click", () => {
+      const col = th.dataset.col;
+      if (_sortCol === col) { _sortAsc = !_sortAsc; }
+      else { _sortCol = col; _sortAsc = true; }
+      // Update header indicators
+      document.querySelectorAll("th.sortable").forEach(h => {
+        const base = h.textContent.replace(/ [↑↓↕]$/, "");
+        h.textContent = base + (h.dataset.col === _sortCol ? (_sortAsc ? " ↑" : " ↓") : " ↕");
+      });
+      renderConsultants(sortedData());
+    });
+  });
+
+  function sortedData() {
+    return [..._allData].sort((a, b) => {
+      let av = a[_sortCol], bv = b[_sortCol];
+      if (av === null || av === undefined) av = "";
+      if (bv === null || bv === undefined) bv = "";
+      const cmp = typeof av === "number"
+        ? av - bv
+        : String(av).localeCompare(String(bv), undefined, { sensitivity: "base" });
+      return _sortAsc ? cmp : -cmp;
+    });
+  }
+
+  /* ── Availability summary ── */
+  function availSummaryText(rows) {
+    if (!rows || !rows.length) return "—";
+    if (rows.length === 1) {
+      const r = rows[0];
+      const pct = r.capacity_pct < 100 ? ` (${r.capacity_pct}%)` : "";
+      return `${r.start_date} → ${r.end_date}${pct}`;
+    }
+    // Multiple windows: show count + overall range
+    const dates = rows.map(r => [r.start_date, r.end_date]).flat().sort();
+    return `${rows.length} windows · ${dates[0]} → ${dates[dates.length-1]}`;
+  }
+
+  let _calSelectedDays = new Set(); // ISO date strings
+  let _calViewYear, _calViewMonth;
+  let _calMonthsShown = 1;
+
+  /* ── helpers ── */
+  function toast(msg, type) {
+    if (window.showToast) { window.showToast(msg, type); return; }
+    alert(msg);
+  }
+  function escHtml(s) {
+    const d = document.createElement("div");
+    d.appendChild(document.createTextNode(String(s ?? "")));
+    return d.innerHTML;
+  }
+  function toggleModal(id, show) {
+    document.getElementById(id).classList.toggle("hidden", !show);
+    document.getElementById("modal-backdrop").classList.toggle("hidden", !show);
+  }
+  function pad2(n) { return String(n).padStart(2, "0"); }
+  function toISO(y, m, d) { return `${y}-${pad2(m)}-${pad2(d)}`; }
+
+  /* ══════════════════════════════════════════
+     Mode switching
+  ══════════════════════════════════════════ */
+  document.querySelectorAll(".avail-mode-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".avail-mode-btn").forEach(b => b.classList.remove("active"));
+      document.querySelectorAll(".avail-mode-panel").forEach(p => p.classList.add("hidden"));
+      btn.classList.add("active");
+      _currentMode = btn.dataset.mode;
+      document.getElementById("panel-" + _currentMode).classList.remove("hidden");
+      if (_currentMode === "calendar") renderCalendars();
+      document.getElementById("avail-preview").classList.add("hidden");
+    });
+  });
+
+  /* ── N days/week slider ── */
+  document.getElementById("days-per-week").addEventListener("input", function () {
+    document.getElementById("days-per-week-val").textContent = this.value;
+    document.getElementById("days-week-pct").textContent = Math.round((+this.value / 5) * 100) + "%";
+  });
+
+  /* ── Fixed days checkboxes ── */
+  document.querySelectorAll("#panel-fixed-days .day-toggle input").forEach(cb => {
+    cb.addEventListener("change", () => {
+      const n = document.querySelectorAll("#panel-fixed-days .day-toggle input:checked").length;
+      document.getElementById("fixed-days-count").textContent = n;
+      document.getElementById("fixed-days-pct").textContent = Math.round((n / 5) * 100) + "%";
+    });
+  });
+
+  /* ══════════════════════════════════════════
+     Calendar (custom days mode)
+  ══════════════════════════════════════════ */
+  function initCalView() {
+    const now = new Date();
+    _calViewYear = now.getFullYear();
+    _calViewMonth = now.getMonth() + 1; // 1-12
+    _calMonthsShown = 1;
+    _calSelectedDays.clear();
+  }
+
+  function renderCalendars() {
+    const grids = document.getElementById("cal-grids");
+    grids.innerHTML = "";
+    const fromVal = document.getElementById("avail-from").value;
+    const toVal   = document.getElementById("avail-to").value;
+    const fromDate = fromVal ? new Date(fromVal + "T00:00:00") : null;
+    const toDate   = toVal   ? new Date(toVal   + "T00:00:00") : null;
+
+    for (let i = 0; i < _calMonthsShown; i++) {
+      let y = _calViewYear, m = _calViewMonth + i;
+      while (m > 12) { m -= 12; y++; }
+      grids.appendChild(buildMonthGrid(y, m, fromDate, toDate));
+    }
+    updateCalLabel();
+    document.getElementById("cal-selected-count").textContent = _calSelectedDays.size;
+  }
+
+  function buildMonthGrid(year, month, fromDate, toDate) {
+    const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    const DOWS   = ["Mo","Tu","We","Th","Fr","Sa","Su"];
+    const wrap = document.createElement("div");
+    wrap.className = "mini-cal";
+
+    const hdr = document.createElement("div");
+    hdr.className = "mini-cal-header";
+    hdr.textContent = `${MONTHS[month-1]} ${year}`;
+    wrap.appendChild(hdr);
+
+    const grid = document.createElement("div");
+    grid.className = "mini-cal-grid";
+    DOWS.forEach(d => {
+      const dow = document.createElement("div");
+      dow.className = "mini-cal-dow";
+      dow.textContent = d;
+      grid.appendChild(dow);
+    });
+
+    // First day of month (0=Sun..6=Sat) → convert to Mon-based (0=Mon..6=Sun)
+    const firstDay = new Date(year, month - 1, 1).getDay();
+    const monFirst = (firstDay + 6) % 7;
+    const daysInMonth = new Date(year, month, 0).getDate();
+
+    for (let i = 0; i < monFirst; i++) {
+      const empty = document.createElement("div");
+      empty.className = "mini-cal-day empty";
+      grid.appendChild(empty);
+    }
+
+    for (let day = 1; day <= daysInMonth; day++) {
+      const iso = toISO(year, month, day);
+      const cellDate = new Date(year, month - 1, day);
+      const dowIdx = (cellDate.getDay() + 6) % 7; // 0=Mon,6=Sun
+      const isWeekend = dowIdx >= 5;
+      const outRange = (fromDate && cellDate < fromDate) || (toDate && cellDate > toDate);
+
+      const cell = document.createElement("div");
+      cell.className = "mini-cal-day" +
+        (isWeekend ? " weekend" : "") +
+        (outRange  ? " out-range" : "") +
+        (_calSelectedDays.has(iso) ? " selected" : "");
+      cell.textContent = day;
+
+      if (!outRange) {
+        cell.addEventListener("click", () => {
+          if (_calSelectedDays.has(iso)) _calSelectedDays.delete(iso);
+          else _calSelectedDays.add(iso);
+          cell.classList.toggle("selected");
+          document.getElementById("cal-selected-count").textContent = _calSelectedDays.size;
+        });
+      }
+      grid.appendChild(cell);
+    }
+    wrap.appendChild(grid);
+    return wrap;
+  }
+
+  function updateCalLabel() {
+    const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    let ey = _calViewYear, em = _calViewMonth + _calMonthsShown - 1;
+    while (em > 12) { em -= 12; ey++; }
+    const startLabel = `${MONTHS[_calViewMonth-1]} ${_calViewYear}`;
+    const endLabel   = (_calMonthsShown > 1) ? ` – ${MONTHS[em-1]} ${ey}` : "";
+    document.getElementById("cal-month-label").textContent = startLabel + endLabel;
+  }
+
+  document.getElementById("cal-prev").addEventListener("click", () => {
+    _calViewMonth--;
+    if (_calViewMonth < 1) { _calViewMonth = 12; _calViewYear--; }
+    renderCalendars();
+  });
+  document.getElementById("cal-next").addEventListener("click", () => {
+    _calViewMonth++;
+    if (_calViewMonth > 12) { _calViewMonth = 1; _calViewYear++; }
+    renderCalendars();
+  });
+  document.getElementById("cal-add-month").addEventListener("click", () => {
+    _calMonthsShown++;
+    renderCalendars();
+  });
+
+  /* ══════════════════════════════════════════
+     Build availability rows from current mode
+  ══════════════════════════════════════════ */
+  function buildAvailRows() {
+    const from = document.getElementById("avail-from").value;
+    const to   = document.getElementById("avail-to").value;
+    const note = document.getElementById("avail-note").value.trim() || null;
+
+    if (!from || !to) return null; // validation fail
+
+    if (_currentMode === "fulltime") {
+      return [{ start_date: from, end_date: to, capacity_pct: 100, note }];
+    }
+
+    if (_currentMode === "days-week") {
+      const n = parseInt(document.getElementById("days-per-week").value);
+      const pct = Math.round((n / 5) * 100);
+      return [{ start_date: from, end_date: to, capacity_pct: pct, note: note || `${n} days/week` }];
+    }
+
+    if (_currentMode === "fixed-days") {
+      const checked = [...document.querySelectorAll("#panel-fixed-days .day-toggle input:checked")];
+      if (!checked.length) return null;
+      const selectedDowIdxs = new Set(checked.map(c => parseInt(c.value))); // 0=Mon..4=Fri
+      const pct = Math.round((checked.length / 5) * 100);
+      // Build one row per week-span? Simpler: single row with capacity%
+      const dayNames = ["Mon","Tue","Wed","Thu","Fri"];
+      const days = [...selectedDowIdxs].sort().map(i => dayNames[i]).join(",");
+      return [{ start_date: from, end_date: to, capacity_pct: pct, note: note || days }];
+    }
+
+    if (_currentMode === "calendar") {
+      if (!_calSelectedDays.size) return null;
+      const sorted = [..._calSelectedDays].sort();
+      // Group consecutive days into ranges for efficiency
+      const rows = [];
+      let rangeStart = null, rangePrev = null;
+      const flush = () => {
+        if (rangeStart) rows.push({ start_date: rangeStart, end_date: rangePrev, capacity_pct: 100, note });
+      };
+      for (const iso of sorted) {
+        if (!rangeStart) { rangeStart = iso; rangePrev = iso; continue; }
+        const prev = new Date(rangePrev + "T00:00:00");
+        const curr = new Date(iso + "T00:00:00");
+        const diff = (curr - prev) / 86400000;
+        if (diff === 1) { rangePrev = iso; }
+        else { flush(); rangeStart = iso; rangePrev = iso; }
+      }
+      flush();
+      return rows;
+    }
+    return null;
+  }
+
+  /* ── Preview button ── */
+  document.getElementById("modal-avail-preview-btn").addEventListener("click", () => {
+    const rows = buildAvailRows();
+    const el = document.getElementById("avail-preview");
+    if (!rows) {
+      el.textContent = "⚠ Please fill in required fields and selections first.";
+      el.classList.remove("hidden");
+      return;
+    }
+    el.innerHTML = `<strong>Will create ${rows.length} availability record(s):</strong><ul style="margin:.4rem 0 0 1.2rem">` +
+      rows.slice(0, 10).map(r => `<li>${r.start_date} → ${r.end_date} at ${r.capacity_pct}%${r.note ? ` (${escHtml(r.note)})` : ""}</li>`).join("") +
+      (rows.length > 10 ? `<li>…and ${rows.length - 10} more</li>` : "") +
+      "</ul>";
+    el.classList.remove("hidden");
+  });
+
+  /* ══════════════════════════════════════════
+     Consultants table
+  ══════════════════════════════════════════ */
+  function renderConsultants(rows) {
+    const tbody = document.getElementById("consultants-tbody");
+    if (!rows || !rows.length) {
+      tbody.innerHTML = '<tr><td colspan="7" class="empty-row">No consultants found.</td></tr>';
+      document.getElementById("consultants-count").textContent = "0 consultants";
+      return;
+    }
+    tbody.innerHTML = rows.map(c => {
+      const summary = _availSummary[c.id] || "—";
+      const hasAvail = summary !== "—";
+      return `
+      <tr>
+        <td>${escHtml(c.name)}</td>
+        <td>${escHtml(c.role || "—")}</td>
+        <td>${escHtml(c.level || "Consultant")}</td>
+        <td>${c.stream ? escHtml(c.stream) : "—"}</td>
+        <td>${c.active ? "✓" : "✗"}</td>
+        <td class="avail-summary-cell">${escHtml(summary)}</td>
+        <td>
+          <button class="btn btn-sm btn-secondary" data-avail-cid="${c.id}"
+                  onclick="openAvailability(${c.id},'${escHtml(c.name)}')"
+                  style="${hasAvail ? 'background:var(--success);color:#fff;border-color:#125c2e' : ''}"
+                  title="${hasAvail ? 'Availability defined ✓' : 'No availability defined'}">Availability</button>
+          <button class="btn btn-sm btn-secondary" onclick="editConsultant(${c.id})">Edit</button>
+          <button class="btn btn-sm btn-danger"    onclick="deleteConsultant(${c.id})">Del</button>
+        </td>
+      </tr>`;
+    }).join("");
+    document.getElementById("consultants-count").textContent = `${rows.length} consultant(s)`;
+  }
+
+  async function loadConsultants() {
+    try {
+      const data = await API.list();
+      _allData = data;
+      renderConsultants(sortedData());
+      // Batch-fetch availability: build summary map + colour buttons
+      Promise.all(
+        data.map(c =>
+          API.avail.list(c.id)
+            .then(rows => ({ id: c.id, rows }))
+            .catch(() => ({ id: c.id, rows: [] }))
+        )
+      ).then(results => {
+        results.forEach(({ id, rows }) => {
+          _availSummary[id] = availSummaryText(rows);
+        });
+        // Re-render with summaries populated
+        renderConsultants(sortedData());
+      });
+    } catch (e) {
+      toast("Failed to load consultants: " + e.message, "error");
+    }
+  }
+
+  function openAddConsultant() {
+    document.getElementById("modal-consultant-title").textContent = "Add Consultant";
+    document.getElementById("consultant-id").value = "";
+    document.getElementById("consultant-name").value = "";
+    document.getElementById("consultant-role").value = "";
+    document.getElementById("consultant-level").value = "Consultant";
+    document.getElementById("consultant-stream").value = "";
+    document.getElementById("consultant-active").checked = true;
+    toggleModal("modal-consultant", true);
+  }
+
+  window.editConsultant = async function (id) {
+    try {
+      const c = await API.get(id);
+      document.getElementById("modal-consultant-title").textContent = "Edit Consultant";
+      document.getElementById("consultant-id").value = c.id;
+      document.getElementById("consultant-name").value = c.name;
+      document.getElementById("consultant-role").value = c.role || "";
+      document.getElementById("consultant-level").value = c.level || "Consultant";
+      document.getElementById("consultant-stream").value = c.stream || "";
+      document.getElementById("consultant-active").checked = !!c.active;
+      toggleModal("modal-consultant", true);
+    } catch (e) { toast("Failed to load consultant: " + e.message, "error"); }
+  };
+
+  window.deleteConsultant = async function (id) {
+    if (!confirm("Delete this consultant?")) return;
+    try { await API.del(id); toast("Consultant deleted.", "success"); loadConsultants(); }
+    catch (e) { toast("Delete failed: " + e.message, "error"); }
+  };
+
+  async function saveConsultant() {
+    const id = document.getElementById("consultant-id").value;
+    const payload = {
+      name:        document.getElementById("consultant-name").value.trim(),
+      role:        document.getElementById("consultant-role").value.trim(),
+      level:  document.getElementById("consultant-level").value || "Consultant",
+      stream: document.getElementById("consultant-stream").value.trim() || null,
+      active:      document.getElementById("consultant-active").checked,
+    };
+    if (!payload.name || !payload.role) { toast("Name and role are required.", "error"); return; }
+    try {
+      if (id) { await API.update(id, payload); toast("Consultant updated.", "success"); }
+      else     { await API.create(payload);     toast("Consultant added.", "success"); }
+      toggleModal("modal-consultant", false);
+      loadConsultants();
+    } catch (e) { toast("Save failed: " + e.message, "error"); }
+  }
+
+  /* ══════════════════════════════════════════
+     Availability section
+  ══════════════════════════════════════════ */
+  window.openAvailability = async function (cid, name) {
+    _activeConsultantId = cid;
+    document.getElementById("avail-consultant-name").textContent = name;
+    document.getElementById("section-availability").classList.remove("hidden");
+    document.getElementById("section-availability").scrollIntoView({ behavior: "smooth" });
+    try { renderAvail(await API.avail.list(cid)); }
+    catch (e) { toast("Failed to load availability: " + e.message, "error"); }
+  };
+
+  function renderAvail(rows) {
+    const tbody = document.getElementById("avail-tbody");
+    if (!rows || !rows.length) {
+      tbody.innerHTML = '<tr><td colspan="5" class="empty-row">No availability windows defined.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = rows.map(a => `
+      <tr>
+        <td>${a.start_date}</td>
+        <td>${a.end_date}</td>
+        <td>${a.capacity_pct ?? "—"}</td>
+        <td>${a.note ? escHtml(a.note) : "—"}</td>
+        <td>
+          <button class="btn btn-sm btn-danger" onclick="deleteAvail(${a.id})">Del</button>
+        </td>
+      </tr>`).join("");
+  }
+
+  function openAddAvail() {
+    document.getElementById("modal-avail-title").textContent = "Add Availability Plan";
+    document.getElementById("avail-id").value = "";
+    document.getElementById("avail-consultant-id").value = _activeConsultantId;
+    document.getElementById("avail-from").value = "";
+    document.getElementById("avail-to").value = "";
+    document.getElementById("avail-note").value = "";
+    document.getElementById("avail-preview").classList.add("hidden");
+    // Reset mode to fulltime
+    document.querySelectorAll(".avail-mode-btn").forEach(b => b.classList.remove("active"));
+    document.querySelectorAll(".avail-mode-panel").forEach(p => p.classList.add("hidden"));
+    document.querySelector('[data-mode="fulltime"]').classList.add("active");
+    document.getElementById("panel-fulltime").classList.remove("hidden");
+    _currentMode = "fulltime";
+    // Reset fixed days
+    document.querySelectorAll("#panel-fixed-days .day-toggle input").forEach(cb => { cb.checked = false; });
+    document.getElementById("fixed-days-count").textContent = "0";
+    document.getElementById("fixed-days-pct").textContent = "0%";
+    // Reset calendar
+    initCalView();
+    toggleModal("modal-avail", true);
+  }
+
+  window.deleteAvail = async function (aid) {
+    if (!confirm("Delete this availability window?")) return;
+    try {
+      await API.avail.del(_activeConsultantId, aid);
+      toast("Availability window deleted.", "success");
+      const remaining = await API.avail.list(_activeConsultantId);
+      renderAvail(remaining);
+      // Update summary cache + re-render row
+      _availSummary[_activeConsultantId] = availSummaryText(remaining);
+      renderConsultants(sortedData());
+    } catch (e) { toast("Delete failed: " + e.message, "error"); }
+  };
+
+  async function saveAvail() {
+    const cid = _activeConsultantId;
+    const rows = buildAvailRows();
+    if (!rows) { toast("Please fill in required fields and make a selection.", "error"); return; }
+    if (!rows.length) { toast("No availability rows to save.", "error"); return; }
+
+    const btn = document.getElementById("modal-avail-confirm");
+    btn.disabled = true;
+    btn.textContent = "Saving…";
+    try {
+      for (const row of rows) {
+        await API.avail.create(cid, row);
+      }
+      toast(`Saved ${rows.length} availability record(s).`, "success");
+      toggleModal("modal-avail", false);
+      const saved = await API.avail.list(cid);
+      renderAvail(saved);
+      // Update summary cache + re-render table row
+      _availSummary[cid] = availSummaryText(saved);
+      renderConsultants(sortedData());
+    } catch (e) {
+      toast("Save failed: " + e.message, "error");
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "💾 Save";
+    }
+  }
+
+  /* ── Event listeners ── */
+  document.getElementById("btn-refresh-consultants").addEventListener("click", loadConsultants);
+  document.getElementById("btn-add-consultant").addEventListener("click", openAddConsultant);
+  document.getElementById("modal-consultant-cancel").addEventListener("click", () => toggleModal("modal-consultant", false));
+  document.getElementById("modal-consultant-confirm").addEventListener("click", saveConsultant);
+
+  document.getElementById("btn-close-avail").addEventListener("click", () => {
+    document.getElementById("section-availability").classList.add("hidden");
+    _activeConsultantId = null;
+  });
+  document.getElementById("btn-add-avail").addEventListener("click", openAddAvail);
+  document.getElementById("modal-avail-cancel").addEventListener("click", () => toggleModal("modal-avail", false));
+  document.getElementById("modal-avail-confirm").addEventListener("click", saveAvail);
+
+  document.getElementById("modal-backdrop").addEventListener("click", () => {
+    toggleModal("modal-consultant", false);
+    toggleModal("modal-avail", false);
+  });
+
+  /* ── Init ── */
+  initCalView();
+  loadConsultants();
+})();
+</script>
+{% endblock %}

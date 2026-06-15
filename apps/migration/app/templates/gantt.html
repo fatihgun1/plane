@@ -1,0 +1,307 @@
+{% extends "base.html" %}
+{% block title %}Gantt — NTT-PMO Optimization Tool{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Implementation Plan</h1>
+  <p class="sub">Gantt view of scheduled tasks grouped by Development item.</p>
+</div>
+<section class="card">
+  <div class="card-header">
+    <h2>Schedule Gantt</h2>
+    <div class="card-actions">
+      <select id="sched-sel" style="padding:.3rem .5rem;border:1px solid var(--border);border-radius:4px;font-size:.85rem;min-width:220px;">
+        <option value="">— Select a Schedule —</option>
+      </select>
+      <button class="btn btn-secondary" id="btn-load" style="margin-left:.5rem">&#9654; Load</button>
+    </div>
+  </div>
+  <div id="gstatus" class="status-bar hidden"></div>
+</section>
+<section class="card hidden" id="gsection">
+  <div class="card-header" style="flex-wrap:wrap;gap:.5rem">
+    <h2 id="gtitle">Implementation Plan</h2>
+    <div class="card-actions" style="gap:.4rem">
+      <button onclick="gExpandAll()" style="font-size:11px;padding:3px 10px;background:#003087;color:#fff;border:none;border-radius:3px;cursor:pointer;">Expand All</button>
+      <button onclick="gCollapseAll()" style="font-size:11px;padding:3px 10px;background:#fff;color:#003087;border:1px solid #003087;border-radius:3px;cursor:pointer;">Collapse All</button>
+      <button onclick="gExpandDefault()" style="font-size:11px;padding:3px 10px;background:#6f42c1;color:#fff;border:none;border-radius:3px;cursor:pointer;">Expand Default</button>
+    </div>
+  </div>
+  <div style="overflow-x:auto;padding:.5rem 0">
+    <table id="gtable" style="border-collapse:collapse;font-size:11px;white-space:nowrap;">
+      <thead id="gthead"></thead>
+      <tbody id="gtbody"></tbody>
+    </table>
+  </div>
+  <div id="glegend" style="padding:.75rem 1rem;display:flex;flex-wrap:wrap;gap:12px;align-items:center;border-top:1px solid var(--border);font-size:10px;"></div>
+</section>
+{% endblock %}
+{% block extra_scripts %}
+<script>
+(function(){
+"use strict";
+var PC={"functional specification (fs)":"#2E7D32","technical specification (ts)":"#558B2F","abap development":"#E65100","cpi development":"#6A1B9A","fiori development":"#0277BD","consultant test":"#00838F","user test":"#0277BD"};
+var PL={"functional specification (fs)":"FS","technical specification (ts)":"TS","abap development":"ABAP","cpi development":"CPI","fiori development":"Fiori","consultant test":"CT","user test":"UT"};
+var MN=["","Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+var HDR="#1e3a5f";
+var _months=[],_rows=[],_cmap={},_imap={};
+
+function esc(s){var d=document.createElement("div");d.textContent=s||"";return d.innerHTML;}
+function dim(y,m){return new Date(y,m,0).getDate();}
+function pd(s){if(!s)return null;var d=new Date(s);return isNaN(d)?null:d;}
+function pcolor(n){return PC[(n||"").trim().toLowerCase()]||"#6f42c1";}
+function plabel(n){return PL[(n||"").trim().toLowerCase()]||(n||"").substring(0,5);}
+
+function sbadge(s){
+  var k=(s||"").toLowerCase(),bg="#adb5bd",fg="#fff";
+  if(k.indexOf("in progress")>=0||k.indexOf("h_in")>=0) bg="#1565C0";
+  else if(k.indexOf("n_done")>=0||k.indexOf("done")>=0||k.indexOf("complete")>=0) bg="#2E7D32";
+  else if(k.indexOf("customer")>=0||k.indexOf("a_cust")>=0) bg="#6f42c1";
+  else if(k.indexOf("ready")>=0||k.indexOf("g_ready")>=0) bg="#E65100";
+  return '<span style="background:'+bg+';color:'+fg+';font-size:9px;padding:1px 5px;border-radius:3px;font-weight:bold;">'+esc(s||"—")+'</span>';
+}
+
+function buildMonths(rows){
+  var mn=null,mx=null;
+  rows.forEach(function(r){
+    var s=pd(r.start),e=pd(r.end);
+    if(s&&(!mn||s<mn))mn=s;
+    if(e&&(!mx||e>mx))mx=e;
+  });
+  if(!mn){var t=new Date();mn=new Date(t.getFullYear(),t.getMonth(),1);}
+  if(!mx)mx=new Date(mn.getFullYear()+1,11,1);
+  var months=[],y=mn.getFullYear(),m=mn.getMonth()+1;
+  var ey=mx.getFullYear(),em=mx.getMonth()+1;
+  while(y<ey||(y===ey&&m<=em)){
+    months.push({y:y,m:m});
+    m++;if(m>12){m=1;y++;}
+    if(months.length>24)break;
+  }
+  return months;
+}
+
+function renderHeader(months){
+  var ths='<th style="background:'+HDR+';color:#fff;font-size:11px;padding:5px 8px;border:1px solid #162d4a;min-width:300px;position:sticky;left:0;z-index:2;text-align:left;">Task</th>';
+  ths+='<th style="background:'+HDR+';color:#fff;font-size:11px;padding:5px 8px;border:1px solid #162d4a;min-width:120px;text-align:left;">Status</th>';
+  months.forEach(function(mo){
+    ths+='<th style="background:'+HDR+';color:#fff;font-size:11px;padding:5px 8px;border:1px solid #162d4a;min-width:70px;text-align:center;">'+MN[mo.m]+'<br><span style="font-size:9px">'+mo.y+'</span></th>';
+  });
+  document.getElementById("gthead").innerHTML='<tr>'+ths+'</tr>';
+}
+
+function barCells(s0,e0,months,color){
+  if(!s0||!e0){return months.map(function(_,i){return '<td style="padding:2px 3px;border:1px solid #dde;background:'+(i%2===0?"#fff":"#f5f7ff")+';min-width:70px;"></td>';}).join("");}
+  var rS=new Date(s0),rE=new Date(e0);
+  return months.map(function(mo,i){
+    var bg=i%2===0?"#fff":"#f5f7ff";
+    var d=dim(mo.y,mo.m);
+    var mS=new Date(mo.y,mo.m-1,1),mE=new Date(mo.y,mo.m-1,d);
+    var bar="";
+    if(rS<=mE&&rE>=mS){
+      var effS=rS>mS?rS:mS,effE=rE<mE?rE:mE;
+      var dur=mE-mS+86400000;
+      var ps=Math.round((effS-mS)/dur*100);
+      var pw=Math.max(4,Math.round((effE-effS+86400000)/dur*100));
+      bar='<div style="position:relative;height:14px;"><div style="position:absolute;left:'+ps+'%;width:'+pw+'%;height:14px;background:'+color+';border-radius:3px;" title="'+esc(s0)+' \u2013 '+esc(e0)+'"></div></div>';
+    }
+    return '<td style="padding:2px 3px;border:1px solid #dde;background:'+bg+';">'+bar+'</td>';
+  }).join("");
+}
+
+function buildRows(tasks,items){
+  var byItem={};
+  tasks.forEach(function(t){if(!byItem[t.item_id])byItem[t.item_id]=[];byItem[t.item_id].push(t);});
+  var rows=[];
+  var ids=Object.keys(byItem).sort(function(a,b){
+    var sa=byItem[a].map(function(t){return t.planned_start||"";}).filter(Boolean).sort()[0]||"";
+    var sb=byItem[b].map(function(t){return t.planned_start||"";}).filter(Boolean).sort()[0]||"";
+    return sa.localeCompare(sb);
+  });
+  ids.forEach(function(iid){
+    var item=items[iid]||{};
+    var itasks=byItem[iid];
+    var starts=itasks.map(function(t){return t.planned_start;}).filter(Boolean).sort();
+    var ends=itasks.map(function(t){return t.planned_end;}).filter(Boolean).sort();
+    var rid="item-"+iid;
+    rows.push({level:0,key:item.jira_key||"Item "+iid,summary:item.summary||"",
+      start:starts[0]||null,end:ends[ends.length-1]||null,
+      status:item.status||"",rowId:rid,parentId:null});
+    itasks.sort(function(a,b){return (a.planned_start||"").localeCompare(b.planned_start||"");});
+    itasks.forEach(function(t){
+      rows.push({level:1,key:t.jira_child_key||"—",summary:t.phase_name||"",
+        start:t.planned_start,end:t.planned_end,
+        status:t.child_status||"B_Not Started",phase:t.phase_name||"",
+        rowId:null,parentId:rid,effort:t.effort_days,
+        consultant:_cmap[t.assigned_consultant_id]||""});
+    });
+  });
+  return rows;
+}
+
+function renderBody(rows,months){
+  var pids=new Set(rows.filter(function(r){return r.parentId;}).map(function(r){return r.parentId;}));
+  var html="";
+  rows.forEach(function(row){
+    var isItem=row.level===0;
+    var color=isItem?"#1565C0":pcolor(row.phase||row.summary);
+    var pad=row.level*16;
+    var bg=isItem?"#eef2fb":"#fff";
+    var fw=isItem?"bold":"normal";
+
+    var badge=isItem
+      ? '<span style="background:#1565C0;color:#fff;font-size:9px;font-weight:bold;padding:1px 5px;border-radius:3px;margin-right:4px;">Dev</span>'
+      : '<span style="background:'+pcolor(row.phase||row.summary)+';color:#fff;font-size:9px;font-weight:bold;padding:1px 5px;border-radius:3px;margin-right:4px;">'+esc(plabel(row.phase||row.summary))+'</span>';
+
+    var btn=row.rowId&&pids.has(row.rowId)
+      ? '<span class="gbtn-'+esc(row.rowId)+'" onclick="gToggle(\''+row.rowId.replace(/'/g,"\\'")+'\')\" style="cursor:pointer;margin-right:4px;font-size:11px;">&#9654;</span>'
+      : '<span style="display:inline-block;width:16px;margin-right:4px;"></span>';
+
+    var keyHtml=row.key&&row.key!=="—"&&/^[A-Z]+-\d+/.test(row.key)
+      ? '<a href="https://ndbstr.atlassian.net/browse/'+esc(row.key)+'" target="_blank" style="color:#003087;font-weight:'+fw+';text-decoration:none;">'+esc(row.key)+'</a>'
+      : '<span style="color:#666;">'+esc(row.key)+'</span>';
+
+    var sumHtml='<span style="font-weight:'+fw+';color:'+(isItem?'#003087':'#333')+';">'+esc(row.summary)+'</span>';
+    if(!isItem&&row.effort!=null) sumHtml+=' <span style="font-size:9px;color:#888;">('+row.effort.toFixed(1)+'d)</span>';
+    if(!isItem&&row.consultant) sumHtml+=' <span style="font-size:9px;color:#6f42c1;">'+esc(row.consultant)+'</span>';
+
+    var clsA=row.parentId?' class="gr-'+esc(row.parentId)+'"':'';
+    var dA=' data-rowid="'+(row.rowId?esc(row.rowId):"")+'" data-level="'+row.level+'"';
+    var hideA=row.parentId?' style="display:none;"':'';
+
+    html+='<tr'+clsA+dA+hideA+'>';
+    html+='<td style="padding:3px 6px;border:1px solid #dde;background:'+bg+';position:sticky;left:0;z-index:1;white-space:nowrap;">';
+    html+='<span style="display:inline-block;width:'+pad+'px;"></span>'+btn+badge+keyHtml+' '+sumHtml;
+    html+='</td>';
+    html+='<td style="padding:3px 6px;border:1px solid #dde;background:'+bg+';">'+sbadge(row.status)+'</td>';
+    html+=barCells(row.start,row.end,months,color);
+    html+='</tr>\n';
+  });
+  document.getElementById("gtbody").innerHTML=html;
+}
+
+function renderLegend(){
+  var items=[
+    {color:"#1565C0",label:"Development"},
+    {color:"#2E7D32",label:"FS"},
+    {color:"#558B2F",label:"TS"},
+    {color:"#E65100",label:"ABAP"},
+    {color:"#6A1B9A",label:"CPI"},
+    {color:"#0277BD",label:"Fiori/UT"},
+    {color:"#00838F",label:"Consultant Test"}
+  ];
+  var html=items.map(function(it){
+    return '<span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:12px;height:12px;background:'+it.color+';border-radius:2px;display:inline-block;"></span><span>'+esc(it.label)+'</span></span>';
+  }).join("");
+  document.getElementById("glegend").innerHTML=html;
+}
+
+function toast(msg,type){if(window.showToast){window.showToast(msg,type);return;}alert(msg);}
+function statusBar(msg,type){
+  var bar=document.getElementById("gstatus");
+  bar.textContent=msg;bar.className="status-bar "+(type||"info");
+  bar.classList.remove("hidden");
+  if(type==="success")setTimeout(function(){bar.classList.add("hidden");},4000);
+}
+
+/* ── Toggle ── */
+function gToggle(id){
+  var rows=document.querySelectorAll(".gr-"+id);
+  if(!rows.length)return;
+  var show=rows[0].style.display==="none";
+  for(var i=0;i<rows.length;i++){
+    rows[i].style.display=show?"":"none";
+    if(!show){
+      var rid=rows[i].getAttribute("data-rowid");
+      if(rid){var sub=document.querySelectorAll(".gr-"+rid);for(var j=0;j<sub.length;j++)sub[j].style.display="none";}
+    }
+  }
+  var btn=document.querySelector(".gbtn-"+id);
+  if(btn)btn.innerHTML=show?"&#9660;":"&#9654;";
+}
+function gExpandAll(){
+  document.querySelectorAll("#gtbody tr").forEach(function(r){r.style.display="";});
+  document.querySelectorAll('[class*="gbtn-"]').forEach(function(b){b.innerHTML="&#9660;";});
+}
+function gCollapseAll(){
+  document.querySelectorAll("#gtbody tr").forEach(function(r){
+    if(parseInt(r.getAttribute("data-level")||"0")>0)r.style.display="none";
+  });
+  document.querySelectorAll('[class*="gbtn-"]').forEach(function(b){b.innerHTML="&#9654;";});
+}
+function gExpandDefault(){
+  document.querySelectorAll("#gtbody tr").forEach(function(r){
+    r.style.display=parseInt(r.getAttribute("data-level")||"0")<=1?"":"none";
+  });
+  document.querySelectorAll('[class*="gbtn-"]').forEach(function(b){b.innerHTML="&#9654;";});
+  // Open top-level toggles
+  document.querySelectorAll("#gtbody tr[data-level='0']").forEach(function(r){
+    var rid=r.getAttribute("data-rowid");
+    if(rid){var btn=document.querySelector(".gbtn-"+rid);if(btn)btn.innerHTML="&#9660;";}
+  });
+}
+
+/* ── Load schedules ── */
+async function loadSchedules(){
+  try{
+    const data=await fetch("/api/schedule/").then(r=>r.json());
+    const sel=document.getElementById("sched-sel");
+    sel.innerHTML='<option value="">— Select a Schedule —</option>';
+    (data||[]).forEach(function(s){
+      var opt=document.createElement("option");
+      opt.value=s.id;
+      opt.textContent=s.name+" ("+s.project_start+")";
+      sel.appendChild(opt);
+    });
+  }catch(e){toast("Failed to load schedules: "+e.message,"error");}
+}
+
+/* ── Load Gantt ── */
+async function loadGantt(){
+  const sel=document.getElementById("sched-sel");
+  const sid=sel.value;
+  if(!sid){toast("Select a schedule first.","error");return;}
+  statusBar("Loading...","info");
+  document.getElementById("gsection").classList.add("hidden");
+  try{
+    const [schedData,itemsData,consData]=await Promise.all([
+      fetch("/api/schedule/"+sid).then(r=>r.json()),
+      fetch("/api/items/").then(r=>r.json()),
+      fetch("/api/consultants").then(r=>r.json())
+    ]);
+    if(schedData.error) throw new Error(schedData.error);
+
+    // Build lookup maps
+    _imap={};(itemsData||[]).forEach(function(i){_imap[i.id]=i;});
+    _cmap={};(consData||[]).forEach(function(c){_cmap[c.id]=c.name;});
+
+    // Enrich tasks with child item status
+    var tasks=schedData.tasks||[];
+    var jmap={};(itemsData||[]).forEach(function(i){if(i.jira_key)jmap[i.jira_key]=i;});
+    tasks.forEach(function(t){
+      if(t.jira_child_key&&jmap[t.jira_child_key]){
+        t.child_status=jmap[t.jira_child_key].status||"B_Not Started";
+      } else {
+        t.child_status="B_Not Started";
+      }
+    });
+
+    document.getElementById("gtitle").textContent=schedData.name||"Implementation Plan";
+    _rows=buildRows(tasks,_imap);
+    _months=buildMonths(_rows.map(function(r){return {start:r.start,end:r.end};}));
+    renderHeader(_months);
+    renderBody(_rows,_months);
+    renderLegend();
+    document.getElementById("gsection").classList.remove("hidden");
+    gExpandDefault();
+    statusBar("Loaded "+tasks.length+" tasks.","success");
+  }catch(e){
+    statusBar("Error: "+e.message,"error");
+    toast("Failed to load Gantt: "+e.message,"error");
+  }
+}
+
+/* ── Init ── */
+document.getElementById("btn-load").addEventListener("click",loadGantt);
+loadSchedules();
+})();
+</script>
+{% endblock %}

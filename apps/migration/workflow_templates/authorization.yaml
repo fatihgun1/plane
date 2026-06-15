@@ -1,0 +1,22 @@
+# workflow_templates/authorization.yaml
+# Authorization activity workflow.
+
+template_name: authorization
+
+applies_to: []  # Populated via Settings → Issue Type Mapping
+
+phases:
+  - order: 1
+    name: "Define Authorizations"
+    required_roles:
+      - Functional
+    effort_factor: 0.40
+    is_blocking: true
+
+  - order: 2
+    name: "Implement Authorizations"
+    required_roles:
+      - Basis
+      - Functional
+    effort_factor: 0.60
+    is_blocking: true

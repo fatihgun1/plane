@@ -1,0 +1,863 @@
+{% extends "base.html" %}
+{% block title %}Migration — NTT-PMO Optimization Tool{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1 id="page-title">Jira → Plane Migration</h1>
+  <p class="sub" id="page-sub">Fetch tasks from Jira with the configured connection, map statuses, and push them into a Plane project in batches.</p>
+</div>
+
+<!-- ── Tab bar (migration flow + all settings) ───────────────────── -->
+<div class="settings-tabs" id="settings-tabs">
+  <button class="tab-btn active" data-tab="tab-migration">Migration</button>
+  <button class="tab-btn"        data-tab="tab-pages">Confluence Pages</button>
+  <button class="tab-btn"        data-tab="tab-jira">Jira Connection</button>
+  <button class="tab-btn"        data-tab="tab-confluence">Confluence Connection</button>
+  <button class="tab-btn"        data-tab="tab-fieldmap">Field Map</button>
+  <button class="tab-btn"        data-tab="tab-import">Import Defaults</button>
+  <button class="tab-btn"        data-tab="tab-scheduler">Scheduler</button>
+  <button class="tab-btn"        data-tab="tab-workflow">Workflow</button>
+</div>
+
+<!-- ══ Migration flow panel ══════════════════════════════════════ -->
+<div class="tab-panel" id="tab-migration" style="display:flex;flex-direction:column;gap:1.25rem">
+
+<!-- ── 1. Target ─────────────────────────────────────────────────── -->
+<section class="card">
+  <div class="card-header">
+    <h2>1 · Target</h2>
+  </div>
+  <div class="filter-bar">
+    <label>Workspace
+      <input type="text" id="mig-workspace" disabled style="min-width:160px" />
+    </label>
+    <label>Plane project
+      <select id="mig-project" style="min-width:240px"></select>
+    </label>
+    <label>&nbsp;
+      <button class="btn btn-secondary" id="btn-mig-ensure-project"
+              title="Find or create a Plane project with the same name and key as the Jira project">
+        ↪ Use Jira project <span id="mig-jira-key" class="hint"></span>
+      </button>
+    </label>
+    <label>&nbsp;
+      <button class="btn btn-secondary" id="btn-mig-new-toggle"
+              title="Create a brand-new Plane project">+ New project</button>
+    </label>
+  </div>
+
+  <!-- Inline "create new Plane project" form -->
+  <div class="filter-bar hidden" id="mig-new-project-form" style="border-top:1px dashed var(--border)">
+    <label>New project name
+      <input type="text" id="mig-new-name" placeholder="e.g. Finance Migration" style="min-width:220px" />
+    </label>
+    <label>Key
+      <input type="text" id="mig-new-key" placeholder="e.g. FIN" maxlength="12"
+             style="min-width:100px;text-transform:uppercase" />
+    </label>
+    <label>&nbsp;
+      <button class="btn btn-primary" id="btn-mig-new-create">Create project</button>
+    </label>
+    <label>&nbsp;
+      <button class="btn btn-secondary" id="btn-mig-new-cancel">Cancel</button>
+    </label>
+  </div>
+
+  <p class="hint" style="padding:0 1.25rem .75rem">
+    Each migration targets one Plane project — you can use several. Pick an existing project,
+    click <em>Use Jira project</em> to mirror your Jira project (same name &amp; key),
+    or <em>+ New project</em> to create a fresh one in Plane.
+  </p>
+</section>
+
+<!-- ── 2. Fetch from Jira ────────────────────────────────────────── -->
+<section class="card">
+  <div class="card-header">
+    <h2>2 · Preview from Jira</h2>
+    <div class="card-actions">
+      <button class="btn btn-primary" id="btn-mig-fetch">⤓ Preview</button>
+    </div>
+  </div>
+  <div class="filter-bar">
+    <label style="flex:1">JQL
+      <div class="jql-preset-wrap">
+        <input type="text" id="mig-jql" placeholder="project = KEY ORDER BY created ASC" style="width:100%" />
+        <select id="mig-jql-preset" class="jql-preset-select" aria-label="JQL önerisi seç">
+          <option value="">— JQL önerisi seç —</option>
+          {% for p in jql_presets %}
+          <option value="{{ p.jql | e }}">{{ p.label | e }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </label>
+    <label>Preview rows
+      <input type="number" id="mig-max" value="200" min="1" max="500" style="min-width:90px" />
+    </label>
+  </div>
+  <p class="hint" style="padding:.25rem 1.25rem 0">
+    This is a <strong>sample</strong> to check your JQL and map statuses — the migration
+    ingests <strong>ALL</strong> issues matching the JQL (no row cap), in batches.
+    Click the JQL field to pick a ready-made query.
+  </p>
+  <div class="table-wrap">
+    <table class="data-table" id="mig-preview-table">
+      <thead>
+        <tr>
+          <th>Key</th><th>Summary</th><th>Type</th><th>Jira Status</th>
+          <th>Assignee</th><th>Labels</th><th>Due</th>
+        </tr>
+      </thead>
+      <tbody><tr><td colspan="7" class="empty-row">Preview issues to see a sample here.</td></tr></tbody>
+    </table>
+  </div>
+  <div class="table-footer" id="mig-preview-footer"></div>
+</section>
+
+<!-- ── 2b. Users ─────────────────────────────────────────────────── -->
+<section class="card hidden" id="mig-users-card">
+  <div class="card-header">
+    <h2>Users in this sample <span id="mig-users-count" class="hint"></span></h2>
+    <div class="card-actions">
+      <button class="btn btn-secondary btn-sm" id="btn-mig-users-all">Select all</button>
+      <button class="btn btn-primary" id="btn-mig-import-users">↪ Import selected to Plane</button>
+    </div>
+  </div>
+  <p class="hint" style="padding:.5rem 1.25rem 0">
+    Selected assignees are invited to your Plane workspace via Plane's own invitation flow
+    (role: Member). They become assignable once they accept the invite. Already-members are skipped.
+  </p>
+  <div id="mig-users-list" style="display:flex;flex-wrap:wrap;gap:.5rem 1.25rem;padding:.75rem 1.25rem"></div>
+</section>
+
+<!-- ── 3. Status mapping ─────────────────────────────────────────── -->
+<section class="card hidden" id="mig-mapping-card">
+  <div class="card-header">
+    <h2>3 · Status mapping</h2>
+    <div class="card-actions">
+      <button class="btn btn-secondary" id="btn-mig-save-map">💾 Save mapping</button>
+    </div>
+  </div>
+  <p class="hint" style="padding:.75rem 1.25rem 0">
+    Map each Jira status to a Plane state. "Create" adds a new state to the project with the suggested group.
+  </p>
+  <div class="table-wrap">
+    <table class="data-table" id="mig-mapping-table">
+      <thead><tr><th>Jira status</th><th>Category</th><th>Plane state</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ── 4. Push ───────────────────────────────────────────────────── -->
+<section class="card hidden" id="mig-push-card">
+  <div class="card-header">
+    <h2>4 · Push to Plane</h2>
+    <div class="card-actions">
+      <button class="btn btn-primary" id="btn-mig-start">🚀 Start migration</button>
+    </div>
+  </div>
+  <div class="filter-bar">
+    <label>Batch size
+      <input type="number" id="mig-batch" value="20" min="1" max="100" style="min-width:80px" />
+    </label>
+    <label class="checkbox-label" style="flex-direction:row;align-items:center;gap:.5rem">
+      <input type="checkbox" id="mig-opt-assignees" checked style="width:auto" /> Push assignees
+    </label>
+    <label class="checkbox-label" style="flex-direction:row;align-items:center;gap:.5rem">
+      <input type="checkbox" id="mig-opt-labels" checked style="width:auto" /> Push labels
+    </label>
+    <label class="checkbox-label" style="flex-direction:row;align-items:center;gap:.5rem">
+      <input type="checkbox" id="mig-opt-links" checked style="width:auto" /> Push issue links
+    </label>
+    <label class="checkbox-label" style="flex-direction:row;align-items:center;gap:.5rem">
+      <input type="checkbox" id="mig-opt-cycles" checked style="width:auto" /> Push sprints → cycles
+    </label>
+    <label>Sprint label prefix
+      <input type="text" id="mig-sprint-prefix" placeholder="e.g. spr" style="min-width:90px"
+             title="Native Jira labels starting with this prefix become Plane cycles instead of labels (for teams that track sprints with labels like 'spr7_todo'). Leave blank if you use the Jira Sprint field." />
+    </label>
+    <span class="hint">Plane API limit is 60 req/min — large selections take a while (~1 item/sec).</span>
+  </div>
+</section>
+
+<!-- ── 5. Progress ───────────────────────────────────────────────── -->
+<section class="card hidden" id="mig-progress-card">
+  <div class="card-header">
+    <h2>5 · Progress <span id="mig-job-label" class="hint"></span></h2>
+    <div class="card-actions">
+      <button class="btn btn-danger btn-sm hidden" id="btn-mig-cancel">✕ Cancel</button>
+      <button class="btn btn-secondary btn-sm hidden" id="btn-mig-resume">▶ Resume</button>
+    </div>
+  </div>
+  <div style="padding:1rem 1.25rem">
+    <div style="background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);height:14px;overflow:hidden">
+      <div id="mig-progress-bar" style="background:var(--navy);height:100%;width:0%"></div>
+    </div>
+    <div class="hint" id="mig-progress-text" style="margin-top:.4rem"></div>
+  </div>
+  <div class="table-wrap">
+    <table class="data-table" id="mig-results-table">
+      <thead><tr><th>Key</th><th>Summary</th><th>Result</th><th>Notes</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ── 6. Job history ────────────────────────────────────────────── -->
+<section class="card">
+  <div class="card-header">
+    <h2>Job history</h2>
+    <div class="card-actions">
+      <button class="btn btn-secondary btn-sm" id="btn-mig-history">↺ Refresh</button>
+    </div>
+  </div>
+  <div class="table-wrap">
+    <table class="data-table" id="mig-history-table">
+      <thead><tr><th>#</th><th>Created</th><th>Status</th><th>Done</th><th>Failed</th><th>Total</th><th>JQL</th></tr></thead>
+      <tbody><tr><td colspan="7" class="empty-row">No jobs yet.</td></tr></tbody>
+    </table>
+  </div>
+</section>
+
+</div><!-- /#tab-migration -->
+
+<!-- ══ Confluence Connection panel ═══════════════════════════════════ -->
+<section class="card tab-panel hidden" id="tab-confluence">
+  <div class="card-header"><h2>Confluence Connection</h2></div>
+  <p class="hint" style="margin-bottom:1rem">
+    Confluence uses the <strong>same Atlassian email + API token</strong> as your Jira
+    Connection. Set the wiki base URL and the space to migrate. Base URL defaults to your
+    Jira site + <code>/wiki</code>.
+  </p>
+  <div class="settings-grid">
+    <label class="field-label">Confluence Base URL
+      <input type="url" id="cf-base-url" placeholder="https://your-org.atlassian.net/wiki" />
+      <span class="hint">The wiki root.</span>
+    </label>
+    <label class="field-label">Space Key
+      <input type="text" id="cf-space" placeholder="e.g. ENG" style="max-width:180px" />
+      <span class="hint">The Confluence space to migrate.</span>
+    </label>
+  </div>
+  <div class="form-actions">
+    <button class="btn btn-primary" id="btn-cf-save">💾 Save Confluence Settings</button>
+  </div>
+</section>
+
+<!-- ══ Pages migration panel ════════════════════════════════════════ -->
+<div class="tab-panel hidden" id="tab-pages" style="display:flex;flex-direction:column;gap:1.25rem">
+  <section class="card">
+    <div class="card-header"><h2>1 · Target</h2></div>
+    <div class="filter-bar">
+      <label>Plane project
+        <select id="pg-project" style="min-width:240px"></select>
+      </label>
+      <label>Confluence space
+        <input type="text" id="pg-space" placeholder="space key" style="min-width:140px" />
+      </label>
+    </div>
+    <p class="hint" style="padding:0 1.25rem .75rem">
+      Migrates a Confluence space's pages into the selected Plane project — page hierarchy
+      (sub-pages) and internal page links are preserved; content is converted to Plane's format.
+    </p>
+  </section>
+
+  <section class="card">
+    <div class="card-header">
+      <h2>2 · Preview</h2>
+      <div class="card-actions"><button class="btn btn-primary" id="btn-pg-preview">⤓ Preview</button></div>
+    </div>
+    <div class="table-wrap">
+      <table class="data-table" id="pg-preview-table">
+        <thead><tr><th>Title</th><th>Confluence ID</th><th>Parent</th></tr></thead>
+        <tbody><tr><td colspan="3" class="empty-row">Preview a sample of the space here.</td></tr></tbody>
+      </table>
+    </div>
+    <div class="table-footer" id="pg-preview-footer"></div>
+  </section>
+
+  <section class="card">
+    <div class="card-header">
+      <h2>3 · Push</h2>
+      <div class="card-actions"><button class="btn btn-primary" id="btn-pg-start">🚀 Start migration</button></div>
+    </div>
+    <div class="filter-bar">
+      <label>Batch size <input type="number" id="pg-batch" value="20" min="1" max="100" style="min-width:80px" /></label>
+      <span class="hint">All pages in the space are migrated, in batches.</span>
+    </div>
+  </section>
+
+  <section class="card hidden" id="pg-progress-card">
+    <div class="card-header">
+      <h2>4 · Progress <span id="pg-job-label" class="hint"></span></h2>
+      <div class="card-actions">
+        <button class="btn btn-danger btn-sm hidden" id="btn-pg-cancel">✕ Cancel</button>
+        <button class="btn btn-secondary btn-sm hidden" id="btn-pg-resume">▶ Resume</button>
+      </div>
+    </div>
+    <div style="padding:1rem 1.25rem">
+      <div style="background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);height:14px;overflow:hidden">
+        <div id="pg-progress-bar" style="background:var(--navy);height:100%;width:0%"></div>
+      </div>
+      <div class="hint" id="pg-progress-text" style="margin-top:.4rem"></div>
+    </div>
+    <div class="table-wrap">
+      <table class="data-table" id="pg-results-table">
+        <thead><tr><th>Title</th><th>Result</th><th>Notes</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-header">
+      <h2>Job history</h2>
+      <div class="card-actions"><button class="btn btn-secondary btn-sm" id="btn-pg-history">↺ Refresh</button></div>
+    </div>
+    <div class="table-wrap">
+      <table class="data-table" id="pg-history-table">
+        <thead><tr><th>#</th><th>Created</th><th>Status</th><th>Done</th><th>Failed</th><th>Total</th><th>Space</th></tr></thead>
+        <tbody><tr><td colspan="7" class="empty-row">No jobs yet.</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+</div>
+
+<!-- ══ Settings panels (Jira Connection, Field Map, Import, Scheduler, Workflow) ══ -->
+{% include "_settings_panels.html" %}
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+(function () {
+  "use strict";
+
+  let previewItems = [];
+  let statuses = [];
+  let planeStates = [];
+  let pollTimer = null;
+  let currentJobId = null;
+  let jiraProjectKey = "";
+
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+  /* JQL preset select — inline so it works even when app.js is cached */
+  (function bindJqlPresets() {
+    const input = $("mig-jql");
+    const presetSel = $("mig-jql-preset");
+    if (!input || !presetSel) return;
+
+    presetSel.addEventListener("change", () => {
+      if (presetSel.value) input.value = presetSel.value;
+      presetSel.selectedIndex = 0;
+    });
+
+    const openPresets = () => {
+      presetSel.focus();
+      if (typeof presetSel.showPicker === "function") {
+        try { presetSel.showPicker(); } catch (_) { /* browser may block */ }
+      }
+    };
+    input.addEventListener("focus", openPresets);
+    input.addEventListener("click", openPresets);
+  })();
+
+  /* ── 1. Config / target ─────────────────────── */
+  async function loadConfig() {
+    try {
+      const cfg = await apiFetch("/api/migration/config");
+      $("mig-workspace").value = cfg.workspace_slug;
+      $("mig-jql").value = $("mig-jql").value || cfg.default_jql || "";
+      $("mig-project").innerHTML = cfg.projects.map(p =>
+        `<option value="${esc(p.id)}" ${p.id === cfg.default_project ? "selected" : ""}>${esc(p.name)} (${esc(p.identifier)})</option>`
+      ).join("");
+      jiraProjectKey = cfg.jira_project_key || "";
+      $("mig-jira-key").textContent = jiraProjectKey ? `(${jiraProjectKey})` : "";
+      if (cfg.sprint_label_prefix) $("mig-sprint-prefix").value = cfg.sprint_label_prefix;
+    } catch (e) {
+      toast("Plane connection failed: " + e.message, "error", 8000);
+    }
+  }
+
+  /* Add a project to the dropdown (if missing) and select it */
+  function selectProject(res) {
+    const sel = $("mig-project");
+    let opt = [...sel.options].find(o => o.value === res.project_id);
+    if (!opt) {
+      opt = new Option(`${res.name} (${res.identifier})`, res.project_id);
+      sel.add(opt);
+    }
+    sel.value = res.project_id;
+  }
+
+  /* Find or create the Plane project mirroring the Jira project (same name + key) */
+  $("btn-mig-ensure-project").addEventListener("click", async () => {
+    const btn = $("btn-mig-ensure-project");
+    setLoading(btn, true);
+    try {
+      const res = await apiFetch("/api/migration/ensure-project", { method: "POST" });
+      selectProject(res);
+      toast(res.created
+        ? `Created Plane project "${res.name}" (${res.identifier}).`
+        : `Matched existing Plane project "${res.name}" (${res.identifier}).`, "success");
+    } catch (e) {
+      toast("Project match failed: " + e.message, "error", 8000);
+    } finally { setLoading(btn, false); }
+  });
+
+  /* Manual "create a new Plane project" form */
+  $("btn-mig-new-toggle").addEventListener("click", () => {
+    $("mig-new-project-form").classList.toggle("hidden");
+    $("mig-new-name").focus();
+  });
+  $("btn-mig-new-cancel").addEventListener("click", () => {
+    $("mig-new-project-form").classList.add("hidden");
+    $("mig-new-name").value = ""; $("mig-new-key").value = "";
+  });
+  $("btn-mig-new-create").addEventListener("click", async () => {
+    const name = $("mig-new-name").value.trim();
+    const identifier = $("mig-new-key").value.trim().toUpperCase();
+    if (!name || !identifier) return toast("Project name and key are required.", "error");
+    const btn = $("btn-mig-new-create");
+    setLoading(btn, true);
+    try {
+      const res = await apiFetch("/api/migration/create-project", {
+        method: "POST",
+        body: JSON.stringify({ name, identifier }),
+      });
+      selectProject(res);
+      $("mig-new-project-form").classList.add("hidden");
+      $("mig-new-name").value = ""; $("mig-new-key").value = "";
+      toast(res.created
+        ? `Created Plane project "${res.name}" (${res.identifier}).`
+        : `Project "${res.name}" (${res.identifier}) already existed — selected it.`, "success");
+    } catch (e) {
+      toast("Create failed: " + e.message, "error", 8000);
+    } finally { setLoading(btn, false); }
+  });
+
+  /* ── 2. Fetch + preview ─────────────────────── */
+  $("btn-mig-fetch").addEventListener("click", async () => {
+    const btn = $("btn-mig-fetch");
+    setLoading(btn, true);
+    try {
+      const data = await apiFetch("/api/migration/preview", {
+        method: "POST",
+        body: JSON.stringify({ jql: $("mig-jql").value, sample: +$("mig-max").value }),
+      });
+      previewItems = data.items;
+      statuses = data.statuses;
+      renderPreview();
+      renderUsers(data.assignees || []);
+      await loadStateSuggestions();
+      $("mig-mapping-card").classList.remove("hidden");
+      $("mig-push-card").classList.remove("hidden");
+    } catch (e) {
+      toast("Fetch failed: " + e.message, "error", 8000);
+    } finally { setLoading(btn, false); }
+  });
+
+  /* ── 2b. Users (import to Plane via invite) ──── */
+  function renderUsers(assignees) {
+    const card = $("mig-users-card"), list = $("mig-users-list");
+    if (!assignees.length) { card.classList.add("hidden"); return; }
+    card.classList.remove("hidden");
+    $("mig-users-count").textContent = `(${assignees.length})`;
+    list.innerHTML = assignees.map(a => `
+      <label class="checkbox-label" style="flex-direction:row;align-items:center;gap:.4rem">
+        <input type="checkbox" class="mig-user-check" data-email="${esc(a.email)}" checked style="width:auto" />
+        ${esc(a.name || a.email)} <span class="hint">&lt;${esc(a.email)}&gt;</span>
+      </label>`).join("");
+  }
+
+  $("btn-mig-users-all").addEventListener("click", () => {
+    const boxes = [...document.querySelectorAll(".mig-user-check")];
+    const allOn = boxes.every(b => b.checked);
+    boxes.forEach(b => b.checked = !allOn);
+  });
+
+  $("btn-mig-import-users").addEventListener("click", async () => {
+    const emails = [...document.querySelectorAll(".mig-user-check:checked")].map(b => b.dataset.email);
+    if (!emails.length) return toast("Select at least one user.", "error");
+    const btn = $("btn-mig-import-users");
+    setLoading(btn, true);
+    try {
+      const res = await apiFetch("/api/migration/import-users", {
+        method: "POST", body: JSON.stringify({ emails }),
+      });
+      const parts = [];
+      if (res.invited?.length) parts.push(`invited ${res.invited.length}`);
+      if (res.already_members?.length) parts.push(`${res.already_members.length} already members`);
+      toast(`Users imported — ${parts.join(", ") || "nothing to do"}.`, "success", 7000);
+    } catch (e) {
+      toast("Import failed: " + e.message, "error", 8000);
+    } finally { setLoading(btn, false); }
+  });
+
+  function renderPreview() {
+    const tbody = $("mig-preview-table").querySelector("tbody");
+    if (!previewItems.length) {
+      tbody.innerHTML = `<tr><td colspan="7" class="empty-row">No issues matched.</td></tr>`;
+      $("mig-preview-footer").textContent = "";
+      return;
+    }
+    const keys = new Set(previewItems.map(i => i.key));
+    // Group children under their parents when the parent is in the sample
+    const roots = previewItems.filter(i => !(i.parent_key && keys.has(i.parent_key)));
+    const childrenOf = (key) => previewItems.filter(i => i.parent_key === key);
+    const rows = [];
+    const pushRow = (i, depth) => {
+      rows.push(`<tr>
+        <td>${"&nbsp;".repeat(depth * 3)}${depth ? "↳ " : ""}${esc(i.key)}</td>
+        <td>${esc(i.summary)}</td>
+        <td>${esc(i.issuetype)}</td>
+        <td>${statusBadge(i.status_name)}</td>
+        <td>${esc(i.assignee_email || "—")}</td>
+        <td>${esc((i.labels || []).join(", "))}</td>
+        <td>${esc(i.duedate || "—")}</td>
+      </tr>`);
+      childrenOf(i.key).forEach(c => pushRow(c, depth + 1));
+    };
+    roots.forEach(r => pushRow(r, 0));
+    tbody.innerHTML = rows.join("");
+    $("mig-preview-footer").textContent =
+      `Sample of ${previewItems.length} issue(s), ${statuses.length} distinct status(es). ` +
+      `The job will migrate ALL issues matching this JQL.`;
+  }
+
+  /* ── 3. Status mapping ──────────────────────── */
+  async function loadStateSuggestions() {
+    const data = await apiFetch("/api/migration/state-suggestions", {
+      method: "POST",
+      body: JSON.stringify({ project_id: $("mig-project").value, statuses }),
+    });
+    planeStates = data.states;
+    const tbody = $("mig-mapping-table").querySelector("tbody");
+    tbody.innerHTML = data.suggestions.map(s => {
+      const options = planeStates.map(st =>
+        `<option value="${esc(st.id)}" ${s.state_id === st.id ? "selected" : ""}>${esc(st.name)} (${esc(st.group)})</option>`
+      ).join("");
+      const createSel = s.action === "create" ? "selected" : "";
+      return `<tr data-status="${esc(s.jira_status)}">
+        <td>${esc(s.jira_status)}</td>
+        <td>${esc(s.category || "—")}</td>
+        <td><select class="mig-state-select">
+          <option value="__create__:${esc(s.suggested_group || "backlog")}" ${createSel}>➕ Create "${esc(s.jira_status)}" (${esc(s.suggested_group || "backlog")})</option>
+          ${options}
+        </select></td>
+      </tr>`;
+    }).join("");
+  }
+
+  function collectMapping() {
+    const mapping = {};
+    document.querySelectorAll("#mig-mapping-table tbody tr").forEach(tr => {
+      const status = tr.dataset.status;
+      const val = tr.querySelector(".mig-state-select").value;
+      mapping[status.toLowerCase()] = val.startsWith("__create__:")
+        ? { group: val.split(":")[1] }
+        : { state_id: val };
+    });
+    return mapping;
+  }
+
+  $("btn-mig-save-map").addEventListener("click", async () => {
+    try {
+      await apiFetch("/api/migration/state-map", {
+        method: "POST",
+        body: JSON.stringify({ project_id: $("mig-project").value, mapping: collectMapping() }),
+      });
+      toast("State mapping saved.", "success");
+    } catch (e) { toast("Save failed: " + e.message, "error"); }
+  });
+
+  /* ── 4. Start job ───────────────────────────── */
+  $("btn-mig-start").addEventListener("click", async () => {
+    if (!$("mig-project").value) return toast("Pick a target Plane project first.", "error");
+    if (!$("mig-jql").value.trim()) return toast("Enter a JQL query first.", "error");
+    const btn = $("btn-mig-start");
+    setLoading(btn, true);
+    try {
+      // Persist the mapping first so the worker resolves states with it
+      await apiFetch("/api/migration/state-map", {
+        method: "POST",
+        body: JSON.stringify({ project_id: $("mig-project").value, mapping: collectMapping() }),
+      });
+      const res = await apiFetch("/api/migration/jobs", {
+        method: "POST",
+        body: JSON.stringify({
+          jql: $("mig-jql").value,
+          project_id: $("mig-project").value,
+          batch_size: +$("mig-batch").value,
+          options: {
+            push_assignees: $("mig-opt-assignees").checked,
+            push_labels: $("mig-opt-labels").checked,
+            push_links: $("mig-opt-links").checked,
+            push_cycles: $("mig-opt-cycles").checked,
+            sprint_label_prefix: $("mig-sprint-prefix").value.trim(),
+          },
+        }),
+      });
+      toast(`Migration job #${res.job_id} started — fetching all matching issues…`, "success");
+      watchJob(res.job_id);
+      loadHistory();
+    } catch (e) {
+      toast("Start failed: " + e.message, "error", 8000);
+    } finally { setLoading(btn, false); }
+  });
+
+  /* ── 5. Progress polling ────────────────────── */
+  function watchJob(jobId) {
+    currentJobId = jobId;
+    $("mig-progress-card").classList.remove("hidden");
+    $("mig-job-label").textContent = `— job #${jobId}`;
+    clearInterval(pollTimer);
+    pollTimer = setInterval(refreshJob, 2000);
+    refreshJob();
+  }
+
+  async function refreshJob() {
+    if (!currentJobId) return;
+    let data;
+    try {
+      data = await apiFetch(`/api/migration/jobs/${currentJobId}?items=1&limit=500`);
+    } catch (e) { return; }
+    const job = data.job;
+    const counts = data.counts || {};
+    if (job.status === "ingesting") {
+      // Phase 1 — still pulling pages from Jira; total isn't known yet
+      $("mig-progress-bar").style.width = "100%";
+      $("mig-progress-bar").style.opacity = "0.4";
+      const ingested = (counts.pending || 0) + (counts.done || 0) + (counts.error || 0);
+      $("mig-progress-text").textContent =
+        `Fetching from Jira… ${ingested} issue(s) ingested so far` +
+        (job.stalled ? " (stalled)" : "");
+    } else {
+      $("mig-progress-bar").style.opacity = "1";
+      const pct = job.total_items ? Math.round(100 * job.processed / job.total_items) : 0;
+      $("mig-progress-bar").style.width = pct + "%";
+      const eta = job.status === "running" && job.processed < job.total_items
+        ? ` — ~${Math.ceil((job.total_items - job.processed) * 1.2 / 60)} min left` : "";
+      $("mig-progress-text").textContent =
+        `${job.status}${job.stalled ? " (stalled)" : ""} · ${job.processed}/${job.total_items} pushed · ` +
+        `${job.succeeded} ok · ${job.failed} failed · ${job.skipped} skipped${eta}` +
+        (job.error ? ` · ${job.error}` : "");
+    }
+
+    $("btn-mig-cancel").classList.toggle("hidden", !["pending", "ingesting", "running"].includes(job.status) || job.stalled);
+    $("btn-mig-resume").classList.toggle("hidden", !(job.stalled || ["failed", "cancelled"].includes(job.status)));
+
+    const tbody = $("mig-results-table").querySelector("tbody");
+    tbody.innerHTML = (data.items || []).map(it => {
+      const warnings = it.warnings ? JSON.parse(it.warnings) : [];
+      const note = it.error ? `<span style="color:var(--danger)">${esc(it.error)}</span>` : esc(warnings.join("; "));
+      const result = it.status === "done"
+        ? `<span style="color:var(--success)">${esc(it.op || "done")}</span>`
+        : esc(it.status);
+      return `<tr><td>${esc(it.jira_key)}</td><td>${esc(it.summary)}</td><td>${result}</td><td>${note}</td></tr>`;
+    }).join("") || `<tr><td colspan="4" class="empty-row">Waiting…</td></tr>`;
+
+    if (!["pending", "ingesting", "running", "cancelling"].includes(job.status)) {
+      clearInterval(pollTimer);
+      pollTimer = null;
+      loadHistory();
+    }
+  }
+
+  $("btn-mig-cancel").addEventListener("click", async () => {
+    try { await apiFetch(`/api/migration/jobs/${currentJobId}/cancel`, { method: "POST" }); }
+    catch (e) { toast(e.message, "error"); }
+  });
+
+  $("btn-mig-resume").addEventListener("click", async () => {
+    try {
+      await apiFetch(`/api/migration/jobs/${currentJobId}/resume`, { method: "POST" });
+      watchJob(currentJobId);
+    } catch (e) { toast(e.message, "error"); }
+  });
+
+  /* ── 6. Job history ─────────────────────────── */
+  async function loadHistory() {
+    try {
+      const jobs = await apiFetch("/api/migration/jobs");
+      const tbody = $("mig-history-table").querySelector("tbody");
+      if (!jobs.length) {
+        tbody.innerHTML = `<tr><td colspan="7" class="empty-row">No jobs yet.</td></tr>`;
+        return;
+      }
+      tbody.innerHTML = jobs.map(j => `
+        <tr style="cursor:pointer" data-job="${j.id}">
+          <td>${j.id}</td><td>${esc(j.created_at)}</td><td>${statusBadge(j.status)}</td>
+          <td>${j.succeeded}</td><td>${j.failed}</td><td>${j.total_items}</td>
+          <td title="${esc(j.jql)}">${esc((j.jql || "").slice(0, 60))}</td>
+        </tr>`).join("");
+      tbody.querySelectorAll("tr[data-job]").forEach(tr =>
+        tr.addEventListener("click", () => watchJob(+tr.dataset.job)));
+    } catch (e) { /* silent */ }
+  }
+
+  $("btn-mig-history").addEventListener("click", loadHistory);
+
+  /* ── init ───────────────────────────────────── */
+  loadConfig().then(async () => {
+    await loadHistory();
+    // Reattach to an in-flight job after a reload
+    try {
+      const jobs = await apiFetch("/api/migration/jobs");
+      const active = jobs.find(j => ["pending", "ingesting", "running", "cancelling"].includes(j.status));
+      if (active) watchJob(active.id);
+    } catch (e) { /* silent */ }
+  });
+})();
+</script>
+
+<!-- Confluence → Plane Pages migration logic -->
+<script>
+(function () {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  let pgPoll = null, pgJobId = null, pgLoaded = false;
+
+  async function pgLoadConfig() {
+    try {
+      const cfg = await apiFetch("/api/pages/config");
+      $("pg-project").innerHTML = cfg.projects.map(p =>
+        `<option value="${esc(p.id)}" ${p.id === cfg.default_project ? "selected" : ""}>${esc(p.name)} (${esc(p.identifier)})</option>`).join("");
+      $("cf-base-url").value = cfg.confluence_base_url || "";
+      $("cf-space").value = cfg.confluence_space || "";
+      $("pg-space").value = cfg.confluence_space || "";
+    } catch (e) { toast("Pages config failed: " + e.message, "error", 8000); }
+  }
+
+  $("btn-cf-save").addEventListener("click", async () => {
+    try {
+      await apiFetch("/api/pages/confluence-config", {
+        method: "POST",
+        body: JSON.stringify({ base_url: $("cf-base-url").value.trim(), space: $("cf-space").value.trim() }),
+      });
+      $("pg-space").value = $("cf-space").value.trim();
+      toast("Confluence settings saved.", "success");
+    } catch (e) { toast("Save failed: " + e.message, "error"); }
+  });
+
+  $("btn-pg-preview").addEventListener("click", async () => {
+    const btn = $("btn-pg-preview"); setLoading(btn, true);
+    try {
+      const data = await apiFetch("/api/pages/preview", {
+        method: "POST", body: JSON.stringify({ space: $("pg-space").value.trim() }),
+      });
+      const ids = new Set(data.items.map(i => i.id));
+      const tbody = $("pg-preview-table").querySelector("tbody");
+      tbody.innerHTML = data.items.length ? data.items.map(i =>
+        `<tr><td>${i.parent_id && ids.has(i.parent_id) ? "↳ " : ""}${esc(i.title)}</td><td>${esc(i.id)}</td><td>${esc(i.parent_id || "—")}</td></tr>`
+      ).join("") : `<tr><td colspan="3" class="empty-row">No pages found.</td></tr>`;
+      $("pg-preview-footer").textContent = `Sample of ${data.sample} page(s). The job migrates ALL pages in the space.`;
+    } catch (e) { toast("Preview failed: " + e.message, "error", 8000); }
+    finally { setLoading(btn, false); }
+  });
+
+  $("btn-pg-start").addEventListener("click", async () => {
+    if (!$("pg-project").value) return toast("Pick a target project.", "error");
+    if (!$("pg-space").value.trim()) return toast("Enter a Confluence space key.", "error");
+    const btn = $("btn-pg-start"); setLoading(btn, true);
+    try {
+      const res = await apiFetch("/api/pages/jobs", {
+        method: "POST",
+        body: JSON.stringify({ project_id: $("pg-project").value, space: $("pg-space").value.trim(), batch_size: +$("pg-batch").value }),
+      });
+      toast(`Page job #${res.job_id} started — fetching Confluence pages…`, "success");
+      pgWatch(res.job_id); pgHistory();
+    } catch (e) { toast("Start failed: " + e.message, "error", 8000); }
+    finally { setLoading(btn, false); }
+  });
+
+  function pgWatch(id) {
+    pgJobId = id;
+    $("pg-progress-card").classList.remove("hidden");
+    $("pg-job-label").textContent = `— job #${id}`;
+    clearInterval(pgPoll); pgPoll = setInterval(pgRefresh, 2000); pgRefresh();
+  }
+
+  async function pgRefresh() {
+    if (!pgJobId) return;
+    let data; try { data = await apiFetch(`/api/pages/jobs/${pgJobId}?items=1&limit=500`); } catch (e) { return; }
+    const j = data.job, counts = data.counts || {};
+    if (j.status === "ingesting") {
+      $("pg-progress-bar").style.width = "100%"; $("pg-progress-bar").style.opacity = "0.4";
+      const got = (counts.pending||0)+(counts.done||0)+(counts.error||0);
+      $("pg-progress-text").textContent = `Fetching from Confluence… ${got} page(s) ingested${j.stalled?" (stalled)":""}`;
+    } else {
+      $("pg-progress-bar").style.opacity = "1";
+      const pct = j.total_items ? Math.round(100*j.processed/j.total_items) : 0;
+      $("pg-progress-bar").style.width = pct + "%";
+      $("pg-progress-text").textContent =
+        `${j.status}${j.stalled?" (stalled)":""} · ${j.processed}/${j.total_items} pushed · ${j.succeeded} ok · ${j.failed} failed · ${j.skipped} skipped` + (j.error?` · ${j.error}`:"");
+    }
+    $("btn-pg-cancel").classList.toggle("hidden", !["pending","ingesting","running"].includes(j.status) || j.stalled);
+    $("btn-pg-resume").classList.toggle("hidden", !(j.stalled || ["failed","cancelled"].includes(j.status)));
+    const tbody = $("pg-results-table").querySelector("tbody");
+    tbody.innerHTML = (data.items||[]).map(it => {
+      const w = it.warnings ? JSON.parse(it.warnings) : [];
+      const note = it.error ? `<span style="color:var(--danger)">${esc(it.error)}</span>` : esc(w.join("; "));
+      const r = it.status === "done" ? `<span style="color:var(--success)">done</span>` : esc(it.status);
+      return `<tr><td>${esc(it.title)}</td><td>${r}</td><td>${note}</td></tr>`;
+    }).join("") || `<tr><td colspan="3" class="empty-row">Waiting…</td></tr>`;
+    if (!["pending","ingesting","running","cancelling"].includes(j.status)) { clearInterval(pgPoll); pgPoll = null; pgHistory(); }
+  }
+
+  $("btn-pg-cancel").addEventListener("click", async () => {
+    try { await apiFetch(`/api/pages/jobs/${pgJobId}/cancel`, { method: "POST" }); } catch (e) { toast(e.message, "error"); }
+  });
+  $("btn-pg-resume").addEventListener("click", async () => {
+    try { await apiFetch(`/api/pages/jobs/${pgJobId}/resume`, { method: "POST" }); pgWatch(pgJobId); } catch (e) { toast(e.message, "error"); }
+  });
+
+  async function pgHistory() {
+    try {
+      const jobs = await apiFetch("/api/pages/jobs");
+      const tbody = $("pg-history-table").querySelector("tbody");
+      tbody.innerHTML = jobs.length ? jobs.map(j =>
+        `<tr style="cursor:pointer" data-job="${j.id}"><td>${j.id}</td><td>${esc(j.created_at)}</td><td>${statusBadge(j.status)}</td><td>${j.succeeded}</td><td>${j.failed}</td><td>${j.total_items}</td><td>${esc(j.space_key)}</td></tr>`
+      ).join("") : `<tr><td colspan="7" class="empty-row">No jobs yet.</td></tr>`;
+      tbody.querySelectorAll("tr[data-job]").forEach(tr => tr.addEventListener("click", () => pgWatch(+tr.dataset.job)));
+    } catch (e) { /* silent */ }
+  }
+  $("btn-pg-history").addEventListener("click", pgHistory);
+
+  // Keep the page header in sync with the active tab
+  const HEADERS = {
+    "tab-migration":  ["Jira → Plane Migration", "Fetch Jira issues, map statuses, and push them into a Plane project in batches."],
+    "tab-pages":      ["Confluence → Plane Pages", "Migrate a Confluence space's pages into a Plane project — page hierarchy and links preserved."],
+    "tab-jira":       ["Jira Connection", "Your personal Jira connection — base URL, project key, email and API token."],
+    "tab-confluence": ["Confluence Connection", "Confluence base URL and space (shares the Atlassian email + token with Jira)."],
+  };
+  document.querySelectorAll(".tab-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const h = HEADERS[btn.dataset.tab] || ["Settings", "Configure the migration tool."];
+      const t = $("page-title"), s = $("page-sub");
+      if (t) t.textContent = h[0];
+      if (s) s.textContent = h[1];
+    });
+  });
+
+  // Lazy-load the Pages tab the first time it's opened
+  document.querySelectorAll(".tab-btn").forEach(btn => {
+    if (btn.dataset.tab === "tab-pages") btn.addEventListener("click", async () => {
+      if (pgLoaded) return; pgLoaded = true;
+      await pgLoadConfig(); await pgHistory();
+      try {
+        const jobs = await apiFetch("/api/pages/jobs");
+        const active = jobs.find(j => ["pending","ingesting","running","cancelling"].includes(j.status));
+        if (active) pgWatch(active.id);
+      } catch (e) {}
+    });
+    if (btn.dataset.tab === "tab-confluence") btn.addEventListener("click", () => { if (!pgLoaded) pgLoadConfig(); });
+  });
+})();
+</script>
+
+<!-- Settings logic (tab switching, Jira/Field Map/Import/Scheduler/Workflow) -->
+{% include "_settings_script.html" %}
+{% endblock %}

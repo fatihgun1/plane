@@ -140,11 +140,32 @@ services:
       - plane-db
       - plane-redis
 
+  migration:
+    build:
+      context: ./apps/migration
+      dockerfile: Dockerfile.migration
+      args:
+        DOCKER_BUILDKIT: 1
+    restart: unless-stopped
+    networks:
+      - dev_env
+    environment:
+      URL_PREFIX: /migrate
+      DB_PATH: /data/optimization.db
+      PLANE_API_URL: http://api:8000
+    volumes:
+      - migration_data:/data
+    ports:
+      - "5050:5050"
+    depends_on:
+      - api
+
 volumes:
   redisdata:
   uploads:
   pgdata:
   rabbitmq_data:
+  migration_data:
 
 networks:
   dev_env:

@@ -11,6 +11,9 @@
 	
 	reverse_proxy /live/* live:3000
 
+  redir /migrate /migrate/ permanent
+	reverse_proxy /migrate/* migration:5050
+
 	reverse_proxy /api/* api:8000
 
 	reverse_proxy /auth/* api:8000

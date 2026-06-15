@@ -1,0 +1,438 @@
+{% extends "base.html" %}
+{% block title %}Work Items — NTT-PMO Optimization Tool{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Work Items</h1>
+  <p class="sub">Import, browse, and manage backlog items to be scheduled.</p>
+</div>
+
+<!-- ── Toolbar ───────────────────────────────────────────────────── -->
+<section class="card" id="section-import">
+  <div class="card-header">
+    <h2>Import / Manage</h2>
+    <div class="card-actions">
+      <button class="btn btn-secondary" id="btn-refresh-items">↺ Refresh</button>
+      <button class="btn btn-primary"   id="btn-import-jira">⬇ Import from Jira</button>
+      <button class="btn btn-danger"    id="btn-clear-items">✕ Clear All</button>
+    </div>
+  </div>
+  <div id="import-status" class="status-bar hidden"></div>
+</section>
+
+<!-- ── Filters ───────────────────────────────────────────────────── -->
+<section class="card">
+  <div class="card-header">
+    <h2>Filters</h2>
+  </div>
+  <div class="filter-row" id="filter-row">
+    <!-- Status is always available as a server-side filter -->
+    <label class="field-label" style="flex:1">
+      Status
+      <select id="filter-status">
+        <option value="">All statuses</option>
+      </select>
+    </label>
+    <!-- Issue Type is always available as a server-side filter -->
+    <label class="field-label" style="flex:1">
+      Issue Type
+      <select id="filter-type">
+        <option value="">All types</option>
+      </select>
+    </label>
+    <button class="btn btn-secondary" id="btn-apply-filters" style="align-self:flex-end">Apply</button>
+    <button class="btn btn-secondary" id="btn-reset-filters" style="align-self:flex-end">Reset</button>
+  </div>
+</section>
+
+<!-- ── Items Table ───────────────────────────────────────────────── -->
+<section class="card" id="section-items">
+  <div class="card-header">
+    <h2>Items</h2>
+  </div>
+  <div class="table-wrap">
+    <table id="items-table" class="data-table">
+      <thead id="items-thead">
+        <tr><th colspan="1" class="empty-row">Loading columns…</th></tr>
+      </thead>
+      <tbody id="items-tbody">
+        <tr><td colspan="9" class="empty-row">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="table-footer">
+    <span id="items-count">—</span>
+  </div>
+</section>
+
+<!-- ── Edit Item Modal ───────────────────────────────────────────── -->
+<div id="modal-item" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modal-item-title">
+  <div class="modal-box">
+    <h3 id="modal-item-title">Edit Item</h3>
+    <input type="hidden" id="item-id" value="" />
+
+    <label class="field-label">Jira Key
+      <input type="text" id="item-jira-key" readonly />
+    </label>
+    <label class="field-label">Summary
+      <input type="text" id="item-summary" />
+    </label>
+    <label class="field-label">Effort (days)
+      <input type="number" id="item-effort" min="0" step="0.5" value="0" />
+    </label>
+    <label class="field-label">Priority
+      <select id="item-priority">
+        <option>Highest</option>
+        <option>High</option>
+        <option>Medium</option>
+        <option>Low</option>
+        <option>Lowest</option>
+      </select>
+    </label>
+    <label class="field-label">Status
+      <input type="text" id="item-status" />
+    </label>
+
+    <div class="modal-actions">
+      <button class="btn btn-secondary" id="modal-item-cancel">Cancel</button>
+      <button class="btn btn-primary"   id="modal-item-confirm">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Import Jira Modal ─────────────────────────────────────────── -->
+<div id="modal-import" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modal-import-title">
+  <div class="modal-box">
+    <h3 id="modal-import-title">Import from Jira</h3>
+
+    <label class="field-label">JQL Query
+      <textarea id="import-jql" rows="3" placeholder='project = "MY-PROJ" AND issuetype = Story ORDER BY priority'></textarea>
+    </label>
+    <label class="field-label">Max Results
+      <input type="number" id="import-max" value="200" min="1" max="1000" />
+    </label>
+    <label class="field-label checkbox-label" style="flex-direction:row;align-items:center;gap:.5rem;">
+      <input type="checkbox" id="import-replace" style="width:auto;margin:0" />
+      Replace existing items (clear before import)
+    </label>
+
+    <p class="hint">Requires your personal Jira credentials, custom field IDs and import defaults —
+      all configured under the <a href="{{ request.script_root }}/migration">Migration</a> page's settings tabs.</p>
+
+    <div class="modal-actions">
+      <button class="btn btn-secondary" id="modal-import-cancel">Cancel</button>
+      <button class="btn btn-primary"   id="modal-import-confirm">Import</button>
+    </div>
+  </div>
+</div>
+
+<div id="modal-backdrop" class="modal-backdrop hidden"></div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+/* ──────────────────────────────────────────────────────────────────
+   Items page logic
+────────────────────────────────────────────────────────────────── */
+(function () {
+  "use strict";
+
+  const API = {
+    list:   (params) => {
+      const qs = params ? "?" + new URLSearchParams(params).toString() : "";
+      return fetch("/api/items" + qs).then(r => r.json());
+    },
+    get:    (id) => fetch(`/api/items/${id}`).then(r => r.json()),
+    update: (id, d) => fetch(`/api/items/${id}`, {
+      method: "PUT",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(d),
+    }).then(r => r.json()),
+    del:    (id) => fetch(`/api/items/${id}`, { method: "DELETE" }).then(r => r.json()),
+    clear:  () => fetch("/api/items", { method: "DELETE" }).then(r => r.json()),
+    importJira: (d) => fetch("/api/items/import/jira", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(d),
+    }).then(r => r.json()),
+  };
+
+  let _allItems = [];
+  let _fieldMapColumns = [];  // all Field Map rows in order: [{field_label, jira_field_id}]
+
+  // Map of lowercase label → getter from item top-level properties
+  const _BUILTIN_MAP = {
+    "key":          item => item.jira_key,
+    "issue type":   item => item.issue_type,
+    "summary":      item => item.summary,
+    "status":       item => item.status,
+    "priority":     item => item.priority,
+    "module":       item => item.module,
+    "stream":       item => item.stream,
+    "epic link":    item => item.epic_key,
+    "story points": item => item.effort_days,
+  };
+
+  /* ── Load Field Map columns ── */
+  async function loadFieldMapColumns() {
+    try {
+      const rows = await fetch("/api/settings/fields").then(r => r.json());
+      _fieldMapColumns = (rows || []).filter(r => r.jira_field_id); // only mapped fields
+      _rebuildTableHeader();
+    } catch (_) { /* silently ignore — table still works with fixed cols */ }
+  }
+
+  function _rebuildTableHeader() {
+    const thead = document.getElementById("items-thead");
+    const colCount = _fieldMapColumns.length + 1; // +1 for Actions
+    thead.innerHTML = `<tr>
+      ${_fieldMapColumns.map(c => `<th>${escHtml(c.field_label)}</th>`).join("")}
+      <th>Actions</th>
+    </tr>`;
+    document.querySelectorAll("#items-tbody .empty-row").forEach(td => {
+      td.setAttribute("colspan", colCount);
+    });
+  }
+
+  /* ── helpers ── */
+  function toast(msg, type) {
+    if (window.showToast) { window.showToast(msg, type); return; }
+    alert(msg);
+  }
+
+  function toggleModal(id, show) {
+    document.getElementById(id).classList.toggle("hidden", !show);
+    document.getElementById("modal-backdrop").classList.toggle("hidden", !show);
+  }
+
+  function escHtml(s) {
+    const d = document.createElement("div");
+    d.appendChild(document.createTextNode(String(s ?? "")));
+    return d.innerHTML;
+  }
+
+  function statusBar(msg, type) {
+    const bar = document.getElementById("import-status");
+    bar.textContent = msg;
+    bar.className = "status-bar " + (type || "info");
+    bar.classList.remove("hidden");
+    if (type === "success") setTimeout(() => bar.classList.add("hidden"), 4000);
+  }
+
+  /* ── Populate filter dropdowns from loaded data ── */
+  function populateFilters(items) {
+    function getVals(getter) {
+      return [...new Set(items.map(getter).filter(Boolean))].sort();
+    }
+    function fill(selId, vals, placeholder) {
+      const sel = document.getElementById(selId);
+      if (!sel) return;
+      const cur = sel.value;
+      sel.innerHTML = `<option value="">All ${escHtml(placeholder)}</option>` +
+        vals.map(v => `<option${v === cur ? " selected" : ""}>${escHtml(v)}</option>`).join("");
+    }
+    fill("filter-status", getVals(i => i.status), "statuses");
+    fill("filter-type",   getVals(i => i.issue_type), "types");
+  }
+
+  /* ── Get cell value for a Field Map column ── */
+  function _getCellValue(item, col) {
+    const labelLc = (col.field_label || "").toLowerCase();
+    // Check built-in fields first
+    if (_BUILTIN_MAP[labelLc] !== undefined) {
+      const val = _BUILTIN_MAP[labelLc](item);
+      return val !== null && val !== undefined ? String(val) : null;
+    }
+    // Fall back to extra_fields
+    const extra = item.extra_fields || {};
+    const val = extra[col.field_label];
+    return val !== null && val !== undefined ? String(val) : null;
+  }
+
+  /* ── Render items table ── */
+  function renderItems(rows) {
+    const tbody = document.getElementById("items-tbody");
+    const colCount = _fieldMapColumns.length + 1;
+    if (!rows || !rows.length) {
+      tbody.innerHTML = `<tr><td colspan="${colCount}" class="empty-row">No items found. Import from Jira or adjust filters.</td></tr>`;
+      document.getElementById("items-count").textContent = "0 items";
+      return;
+    }
+    tbody.innerHTML = rows.map(item => {
+      const cells = _fieldMapColumns.map(col => {
+        const labelLc = (col.field_label || "").toLowerCase();
+        const val = _getCellValue(item, col);
+        const display = val ?? "—";
+        // Special rendering for specific columns
+        if (labelLc === "key") {
+          return `<td><a href="#" onclick="return false" title="${escHtml(display)}">${escHtml(display)}</a></td>`;
+        }
+        if (labelLc === "summary") {
+          return `<td class="summary-cell" title="${escHtml(display)}">${escHtml(display)}</td>`;
+        }
+        if (labelLc === "status") {
+          return `<td><span class="badge badge-${statusClass(display)}">${escHtml(display)}</span></td>`;
+        }
+        return `<td title="${escHtml(display)}">${escHtml(display)}</td>`;
+      }).join("");
+      return `<tr>
+        ${cells}
+        <td>
+          <button class="btn btn-sm btn-secondary" onclick="editItem(${item.id})">Edit</button>
+          <button class="btn btn-sm btn-danger"    onclick="deleteItem(${item.id})">Del</button>
+        </td>
+      </tr>`;
+    }).join("");
+    document.getElementById("items-count").textContent = `${rows.length} item(s)`;
+  }
+
+  function statusClass(s) {
+    if (!s) return "neutral";
+    const sl = s.toLowerCase();
+    if (sl.includes("done") || sl.includes("closed") || sl.includes("complete")) return "success";
+    if (sl.includes("progress") || sl.includes("active")) return "info";
+    return "neutral";
+  }
+
+  /* ── Load items ── */
+  async function loadItems(filters) {
+    try {
+      const data = await API.list(filters);
+      _allItems = data;
+      populateFilters(data);
+      renderItems(data);
+    } catch (e) {
+      toast("Failed to load items: " + e.message, "error");
+    }
+  }
+
+  /* ── Edit Item ── */
+  window.editItem = async function (id) {
+    try {
+      const item = await API.get(id);
+      document.getElementById("modal-item-title").textContent = "Edit Item";
+      document.getElementById("item-id").value = item.id;
+      document.getElementById("item-jira-key").value = item.jira_key || "";
+      document.getElementById("item-summary").value = item.summary || "";
+      document.getElementById("item-effort").value = item.effort_days ?? 0;
+      document.getElementById("item-priority").value = item.priority || "Medium";
+      document.getElementById("item-status").value = item.status || "";
+      toggleModal("modal-item", true);
+    } catch (e) {
+      toast("Failed to load item: " + e.message, "error");
+    }
+  };
+
+  window.deleteItem = async function (id) {
+    if (!confirm("Delete this item?")) return;
+    try {
+      await API.del(id);
+      toast("Item deleted.", "success");
+      loadItems();
+    } catch (e) {
+      toast("Delete failed: " + e.message, "error");
+    }
+  };
+
+  async function saveItem() {
+    const id = document.getElementById("item-id").value;
+    if (!id) return;
+    const payload = {
+      summary:     document.getElementById("item-summary").value.trim(),
+      effort_days: parseFloat(document.getElementById("item-effort").value) || 0,
+      priority:    document.getElementById("item-priority").value,
+      status:      document.getElementById("item-status").value.trim(),
+    };
+    try {
+      await API.update(id, payload);
+      toast("Item updated.", "success");
+      toggleModal("modal-item", false);
+      loadItems();
+    } catch (e) {
+      toast("Save failed: " + e.message, "error");
+    }
+  }
+
+  /* ── Clear all items ── */
+  async function clearItems() {
+    if (!confirm("Delete ALL items? This cannot be undone.")) return;
+    try {
+      await API.clear();
+      toast("All items cleared.", "success");
+      loadItems();
+    } catch (e) {
+      toast("Clear failed: " + e.message, "error");
+    }
+  }
+
+  /* ── Jira import ── */
+  async function openImport() {
+    // Pre-fill from Settings defaults
+    try {
+      const s = await fetch("/api/settings").then(r => r.json());
+      const defaultJql = s["import.default_jql"] || "";
+      const defaultMax = s["import.max_results"]  || "200";
+      if (defaultJql) document.getElementById("import-jql").value = defaultJql;
+      if (defaultMax) document.getElementById("import-max").value = defaultMax;
+    } catch (_) { /* silently ignore — user can type manually */ }
+    toggleModal("modal-import", true);
+  }
+
+  async function runImport() {
+    const jql     = document.getElementById("import-jql").value.trim();
+    const maxRes  = parseInt(document.getElementById("import-max").value) || 200;
+    const replace = document.getElementById("import-replace").checked;
+    if (!jql) { toast("JQL query is required.", "error"); return; }
+    statusBar("Importing from Jira…", "info");
+    toggleModal("modal-import", false);
+    try {
+      const result = await API.importJira({ jql, max_results: maxRes, replace });
+      if (result.error) throw new Error(result.error);
+      toast(`Imported ${result.imported} items.`, "success");
+      statusBar(`Imported ${result.imported} item(s) successfully.`, "success");
+      loadItems();
+    } catch (e) {
+      statusBar("Import failed: " + e.message, "error");
+      toast("Import failed: " + e.message, "error");
+    }
+  }
+
+  /* ── Filters ── */
+  function applyFilters() {
+    const params = {};
+    const status = document.getElementById("filter-status").value;
+    const type   = document.getElementById("filter-type").value;
+    if (status) params.status     = status;
+    if (type)   params.issue_type = type;
+    loadItems(Object.keys(params).length ? params : null);
+  }
+
+  function resetFilters() {
+    document.getElementById("filter-status").value = "";
+    document.getElementById("filter-type").value   = "";
+    loadItems();
+  }
+
+  /* ── Event listeners ── */
+  document.getElementById("btn-refresh-items").addEventListener("click", () => loadItems());
+  document.getElementById("btn-import-jira").addEventListener("click", openImport);
+  document.getElementById("btn-clear-items").addEventListener("click", clearItems);
+  document.getElementById("btn-apply-filters").addEventListener("click", applyFilters);
+  document.getElementById("btn-reset-filters").addEventListener("click", resetFilters);
+
+  document.getElementById("modal-item-cancel").addEventListener("click", () => toggleModal("modal-item", false));
+  document.getElementById("modal-item-confirm").addEventListener("click", saveItem);
+
+  document.getElementById("modal-import-cancel").addEventListener("click", () => toggleModal("modal-import", false));
+  document.getElementById("modal-import-confirm").addEventListener("click", runImport);
+
+  document.getElementById("modal-backdrop").addEventListener("click", () => {
+    toggleModal("modal-item", false);
+    toggleModal("modal-import", false);
+  });
+
+  /* ── Init ── */
+  loadFieldMapColumns().then(() => loadItems());
+})();
+</script>
+{% endblock %}

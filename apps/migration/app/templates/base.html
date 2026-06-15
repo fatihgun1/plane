@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}NTT-PMO Optimization Tool{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=2">
+  <script>
+    // App is mounted under a URL prefix (e.g. /migrate) behind the Plane
+    // proxy. Rewrite root-relative fetch() URLs so hardcoded "/api/..."
+    // calls in templates and app.js keep working.
+    window.APP_PREFIX = {{ request.script_root | tojson }};
+    (function () {
+      const prefix = window.APP_PREFIX;
+      if (!prefix) return;
+      const origFetch = window.fetch.bind(window);
+      window.fetch = async function (input, init) {
+        if (typeof input === "string" && input.startsWith("/") && !input.startsWith(prefix + "/")) {
+          input = prefix + input;
+        }
+        const res = await origFetch(input, init);
+        // Plane session ended (e.g. logged out in another tab) → go to login
+        if (res.status === 401) {
+          window.location.assign(prefix + "/login?next=" + encodeURIComponent(location.pathname));
+        }
+        return res;
+      };
+    })();
+  </script>
+</head>
+<body>
+  <header class="site-header">
+    <div class="header-inner">
+      <span class="logo-text">NTT DATA</span>
+      <span class="app-title">PMO Optimization Tool</span>
+      <nav class="site-nav">
+        <a href="{{ request.script_root }}/" class="nav-link {% if request.path == '/' %}active{% endif %}">Dashboard</a>
+        <a href="{{ request.script_root }}/items" class="nav-link {% if request.path.startswith('/items') %}active{% endif %}">Items</a>
+        <a href="{{ request.script_root }}/migration" class="nav-link {% if request.path.startswith('/migration') %}active{% endif %}">Migration</a>
+        <a href="{{ request.script_root }}/schedules" class="nav-link {% if request.path.startswith('/schedules') %}active{% endif %}">Schedule</a>
+        <a href="{{ request.script_root }}/gantt" class="nav-link {% if request.path.startswith('/gantt') %}active{% endif %}">Gantt</a>
+        <a href="{{ request.script_root }}/consultants" class="nav-link {% if request.path.startswith('/consultants') %}active{% endif %}">Consultants</a>
+        <a href="{{ request.script_root }}/holidays" class="nav-link {% if request.path.startswith('/holidays') %}active{% endif %}">Holidays</a>
+        <a href="{{ request.script_root }}/health" class="nav-link">Health</a>
+      </nav>
+      {% if current_user %}
+      <div class="user-chip" title="{{ current_user.email }}">
+        {% if current_user.avatar %}
+        <img class="user-avatar" src="{{ current_user.avatar }}" alt="" />
+        {% else %}
+        <span class="user-avatar user-avatar-fallback">{{ current_user.display_name[:1] | upper }}</span>
+        {% endif %}
+        <span class="user-name">{{ current_user.display_name }}</span>
+      </div>
+      {% endif %}
+    </div>
+  </header>
+
+  <main class="main-content">
+    {% block content %}{% endblock %}
+  </main>
+
+  <!-- Toast container -->
+  <div id="toast-container" aria-live="polite"></div>
+
+  <script src="{{ url_for('static', filename='app.js') }}?v=2"></script>
+  {% block extra_scripts %}{% endblock %}
+</body>
+</html>

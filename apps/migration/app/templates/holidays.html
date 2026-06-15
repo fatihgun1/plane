@@ -1,0 +1,201 @@
+{% extends "base.html" %}
+{% block title %}Holidays — NTT-PMO Optimization Tool{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Holidays & Non-Working Days</h1>
+  <p class="sub">Define public holidays and blocked dates that reduce sprint capacity.</p>
+</div>
+
+<!-- ── Holidays Table ────────────────────────────────────────────── -->
+<section class="card">
+  <div class="card-header">
+    <h2>Holiday Calendar</h2>
+    <div class="card-actions">
+      <button class="btn btn-secondary" id="btn-refresh-holidays">&#8634; Refresh</button>
+      <button class="btn btn-primary"   id="btn-add-holiday">+ Add Holiday</button>
+    </div>
+  </div>
+
+  <div class="table-wrap">
+    <table id="holidays-table" class="data-table">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Name</th>
+          <th>Country / Region</th>
+          <th>Recurring</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="holidays-tbody">
+        <tr><td colspan="5" class="empty-row">Loading&#8230;</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="table-footer">
+    <span id="holidays-count">&#8212;</span>
+  </div>
+</section>
+
+<!-- ── Add/Edit Holiday Modal ────────────────────────────────────── -->
+<div id="modal-holiday" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modal-holiday-title">
+  <div class="modal-box">
+    <h3 id="modal-holiday-title">Add Holiday</h3>
+    <input type="hidden" id="holiday-id" value="" />
+
+    <label class="field-label">Date *
+      <input type="date" id="holiday-date" />
+    </label>
+    <label class="field-label">Name *
+      <input type="text" id="holiday-name" placeholder="e.g. New Year's Day" />
+    </label>
+    <label class="field-label">Country / Region
+      <input type="text" id="holiday-country" placeholder="e.g. TR, NL, global" />
+    </label>
+    <label class="field-check">
+      <input type="checkbox" id="holiday-recurring" />
+      Recurring (repeats every year)
+    </label>
+
+    <div class="modal-actions">
+      <button class="btn btn-secondary" id="modal-holiday-cancel">Cancel</button>
+      <button class="btn btn-primary"   id="modal-holiday-confirm">Save</button>
+    </div>
+  </div>
+</div>
+
+<div id="modal-backdrop" class="modal-backdrop hidden"></div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+(function () {
+  "use strict";
+
+  const API = {
+    list:   ()       => fetch("/api/holidays").then(r => r.json()),
+    get:    (id)     => fetch("/api/holidays/" + id).then(r => r.json()),
+    create: (d)      => fetch("/api/holidays", { method: "POST",   headers: {"Content-Type":"application/json"}, body: JSON.stringify(d) }).then(r => r.json()),
+    update: (id, d)  => fetch("/api/holidays/" + id, { method: "PUT", headers: {"Content-Type":"application/json"}, body: JSON.stringify(d) }).then(r => r.json()),
+    del:    (id)     => fetch("/api/holidays/" + id, { method: "DELETE" }).then(r => r.json()),
+  };
+
+  function toast(msg, type) {
+    if (window.showToast) { window.showToast(msg, type); return; }
+    alert(msg);
+  }
+
+  function toggleModal(show) {
+    document.getElementById("modal-holiday").classList.toggle("hidden", !show);
+    document.getElementById("modal-backdrop").classList.toggle("hidden", !show);
+  }
+
+  function escHtml(s) {
+    const d = document.createElement("div");
+    d.appendChild(document.createTextNode(String(s)));
+    return d.innerHTML;
+  }
+
+  /* ── Render ── */
+  function renderHolidays(rows) {
+    const tbody = document.getElementById("holidays-tbody");
+    if (!rows || !rows.length) {
+      tbody.innerHTML = '<tr><td colspan="5" class="empty-row">No holidays defined.</td></tr>';
+      document.getElementById("holidays-count").textContent = "0 holidays";
+      return;
+    }
+    tbody.innerHTML = rows.map(h => `
+      <tr>
+        <td>${escHtml(h.date)}</td>
+        <td>${escHtml(h.name)}</td>
+        <td>${h.country ? escHtml(h.country) : "&#8212;"}</td>
+        <td>${h.recurring ? "Yes" : "No"}</td>
+        <td>
+          <button class="btn btn-sm btn-secondary" onclick="editHoliday(${h.id})">Edit</button>
+          <button class="btn btn-sm btn-danger"    onclick="deleteHoliday(${h.id})">Del</button>
+        </td>
+      </tr>`).join("");
+    document.getElementById("holidays-count").textContent = rows.length + " holiday(s)";
+  }
+
+  async function loadHolidays() {
+    try {
+      const data = await API.list();
+      renderHolidays(data);
+    } catch (e) {
+      toast("Failed to load holidays: " + e.message, "error");
+    }
+  }
+
+  /* ── Add ── */
+  function openAddHoliday() {
+    document.getElementById("modal-holiday-title").textContent = "Add Holiday";
+    document.getElementById("holiday-id").value = "";
+    document.getElementById("holiday-date").value = "";
+    document.getElementById("holiday-name").value = "";
+    document.getElementById("holiday-country").value = "";
+    document.getElementById("holiday-recurring").checked = false;
+    toggleModal(true);
+  }
+
+  /* ── Edit ── */
+  window.editHoliday = async function (id) {
+    try {
+      const h = await API.get(id);
+      document.getElementById("modal-holiday-title").textContent = "Edit Holiday";
+      document.getElementById("holiday-id").value = h.id;
+      document.getElementById("holiday-date").value = h.date;
+      document.getElementById("holiday-name").value = h.name;
+      document.getElementById("holiday-country").value = h.country ?? "";
+      document.getElementById("holiday-recurring").checked = !!h.recurring;
+      toggleModal(true);
+    } catch (e) {
+      toast("Failed to load holiday: " + e.message, "error");
+    }
+  };
+
+  /* ── Delete ── */
+  window.deleteHoliday = async function (id) {
+    if (!confirm("Delete this holiday?")) return;
+    try {
+      await API.del(id);
+      toast("Holiday deleted.", "success");
+      loadHolidays();
+    } catch (e) {
+      toast("Delete failed: " + e.message, "error");
+    }
+  };
+
+  /* ── Save ── */
+  async function saveHoliday() {
+    const id = document.getElementById("holiday-id").value;
+    const payload = {
+      date:      document.getElementById("holiday-date").value,
+      name:      document.getElementById("holiday-name").value.trim(),
+      country:   document.getElementById("holiday-country").value.trim() || null,
+      recurring: document.getElementById("holiday-recurring").checked,
+    };
+    if (!payload.date || !payload.name) { toast("Date and name are required.", "error"); return; }
+    try {
+      if (id) { await API.update(id, payload); toast("Holiday updated.", "success"); }
+      else    { await API.create(payload);     toast("Holiday added.", "success"); }
+      toggleModal(false);
+      loadHolidays();
+    } catch (e) {
+      toast("Save failed: " + e.message, "error");
+    }
+  }
+
+  /* ── Listeners ── */
+  document.getElementById("btn-refresh-holidays").addEventListener("click", loadHolidays);
+  document.getElementById("btn-add-holiday").addEventListener("click", openAddHoliday);
+  document.getElementById("modal-holiday-cancel").addEventListener("click", () => toggleModal(false));
+  document.getElementById("modal-holiday-confirm").addEventListener("click", saveHoliday);
+  document.getElementById("modal-backdrop").addEventListener("click", () => toggleModal(false));
+
+  /* ── Init ── */
+  loadHolidays();
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,63 @@
+# workflow_templates/development.yaml
+# Development activity workflow.
+# Must not start before Design is complete (enforced via schedule dependency).
+# Internal phases are sequential where noted; parallel where not blocking.
+#
+# Sub-phases ABAP, CPI, Fiori run in parallel after TS.
+# Consultant Test waits for ALL of ABAP/CPI/Fiori to complete.
+
+template_name: development
+
+applies_to: []  # Populated via Settings → Issue Type Mapping
+
+phases:
+  - order: 1
+    name: "Functional Specification (FS)"
+    required_roles:
+      - Functional
+    effort_factor: 0.15
+    is_blocking: true
+
+  - order: 2
+    name: "Technical Specification (TS)"
+    required_roles:
+      - ABAP
+    effort_factor: 0.10
+    is_blocking: true
+
+  - order: 3
+    name: "ABAP Development"
+    required_roles:
+      - ABAP
+    effort_factor: 0.25
+    is_blocking: false
+
+  - order: 4
+    name: "CPI Development"
+    required_roles:
+      - CPI
+    effort_factor: 0.10
+    is_blocking: false
+
+  - order: 5
+    name: "Fiori Development"
+    required_roles:
+      - Fiori
+    effort_factor: 0.10
+    is_blocking: false
+
+  - order: 6
+    name: "Consultant Test"
+    required_roles:
+      - ABAP
+      - Functional
+    effort_factor: 0.15
+    is_blocking: true
+
+  - order: 7
+    name: "User Test"
+    required_roles:
+      - Functional
+      - Client
+    effort_factor: 0.15
+    is_blocking: true

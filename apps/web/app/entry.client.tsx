@@ -4,7 +4,7 @@
  * See the LICENSE file for details.
  */
 
-import { startTransition, StrictMode } from "react";
+import { startTransition } from "react";
 import { hydrateRoot } from "react-dom/client";
 import { HydratedRouter } from "react-router/dom";
 
@@ -12,11 +12,9 @@ import polyfills from "@/lib/polyfills";
 
 void polyfills;
 
+// NOTE: StrictMode is intentionally disabled. In dev it double-invokes
+// effects (mount → unmount → mount), which resets collapsibles like the
+// "Sub-work items" panel right after they open. Removing it stops that.
 startTransition(() => {
-  hydrateRoot(
-    document,
-    <StrictMode>
-      <HydratedRouter />
-    </StrictMode>
-  );
+  hydrateRoot(document, <HydratedRouter />);
 });

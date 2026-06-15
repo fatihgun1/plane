@@ -1,0 +1,26 @@
+# workflow_templates/cutover.yaml
+# Cut-Over activity workflow.
+# Must not start before Testing is complete.
+
+template_name: cutover
+
+applies_to: []  # Populated via Settings → Issue Type Mapping
+
+phases:
+  - order: 1
+    name: "Cut-Over Plan"
+    required_roles:
+      - Functional
+      - Basis
+    effort_factor: 0.40
+    is_blocking: true
+
+  - order: 2
+    name: "Cut-Over Execute"
+    required_roles:
+      - Functional
+      - ABAP
+      - Basis
+      - Client
+    effort_factor: 0.60
+    is_blocking: true

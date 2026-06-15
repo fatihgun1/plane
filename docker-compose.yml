@@ -105,6 +105,24 @@ services:
         DOCKER_BUILDKIT: 1
     restart: always
 
+  migration:
+    container_name: migration
+    build:
+      context: ./apps/migration
+      dockerfile: Dockerfile.migration
+      args:
+        DOCKER_BUILDKIT: 1
+    restart: always
+    environment:
+      URL_PREFIX: /migrate
+      DB_PATH: /data/optimization.db
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-change-me}
+      PLANE_API_URL: http://api:8000
+    volumes:
+      - migration_data:/data
+    depends_on:
+      - api
+
   plane-db:
     container_name: plane-db
     image: postgres:15.7-alpine
@@ -169,9 +187,11 @@ services:
       - api
       - space
       - admin
+      - migration
 
 volumes:
   pgdata:
   redisdata:
   uploads:
   rabbitmq_data:
+  migration_data:

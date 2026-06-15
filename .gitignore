@@ -117,3 +117,11 @@ packages/i18n/src/types/keys.generated.ts
 
 # Local security notes (not for version control)
 /security/
+
+# Local secrets / artifacts — must NOT be committed
+/cookies.txt
+/headers.txt
+apps/migration/instance/
+apps/migration/_server.log
+**/__pycache__/
+*.pyc

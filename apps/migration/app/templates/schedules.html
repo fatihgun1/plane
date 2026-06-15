@@ -1,0 +1,434 @@
+{% extends "base.html" %}
+{% block title %}Schedule — NTT-PMO Optimization Tool{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Schedule</h1>
+  <p class="sub">Run the optimiser and review generated assignment plans.</p>
+</div>
+
+<!-- ── Run Scheduler ─────────────────────────────────────────────── -->
+<section class="card">
+  <div class="card-header">
+    <h2>Generate Schedule</h2>
+    <div class="card-actions">
+      <button class="btn btn-primary" id="btn-run-schedule">&#9654; Run Optimiser</button>
+    </div>
+  </div>
+  <div class="filter-row">
+    <label class="field-label" style="flex:2">
+      Schedule Name
+      <input type="text" id="sched-name" placeholder="e.g. Sprint 1 Plan" />
+    </label>
+    <label class="field-label" style="flex:1">
+      Project Start *
+      <input type="date" id="sched-start" />
+    </label>
+    <label class="field-label" style="flex:1">
+      Max Parallel Items
+      <input type="number" id="sched-parallel" value="3" min="1" max="20" />
+    </label>
+  </div>
+  <div id="run-status" class="status-bar hidden"></div>
+</section>
+
+<!-- ── Saved Schedules ───────────────────────────────────────────── -->
+<section class="card">
+  <div class="card-header">
+    <h2>Saved Schedules</h2>
+    <div class="card-actions">
+      <button class="btn btn-secondary" id="btn-refresh-schedules">&#8634; Refresh</button>
+    </div>
+  </div>
+  <div class="table-wrap">
+    <table class="data-table" id="schedules-table">
+      <thead>
+        <tr>
+          <th>ID</th><th>Name</th><th>Project Start</th><th>Max Parallel</th>
+          <th>Status</th><th>Created</th><th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="schedules-tbody">
+        <tr><td colspan="7" class="empty-row">Loading&#8230;</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="table-footer"><span id="schedules-count">—</span></div>
+</section>
+
+<!-- ── Task Detail ───────────────────────────────────────────────── -->
+<section class="card hidden" id="section-detail">
+  <div class="card-header">
+    <h2>Scheduled Tasks — <span id="detail-title">—</span></h2>
+    <div class="card-actions">
+      <button class="btn btn-secondary" id="btn-recalculate">&#8635; Recalculate</button>
+      <button class="btn btn-secondary" id="btn-close-detail">&#10005; Close</button>
+      <button class="btn btn-secondary" id="btn-export-csv">&#11015; Export CSV</button>
+    </div>
+  </div>
+  <div class="kpi-row" id="detail-kpis"></div>
+  <div class="table-wrap">
+    <table class="data-table" id="detail-table">
+      <thead>
+        <tr id="detail-thead-row">
+          <th data-col="item_id" class="sortable">Item ID <span class="sort-icon">⇅</span></th>
+          <th data-col="jira_key" class="sortable">Jira Key <span class="sort-icon">⇅</span></th>
+          <th data-col="jira_child_key" class="sortable">Jira Child Key <span class="sort-icon">⇅</span></th>
+          <th data-col="priority" class="sortable">Priority <span class="sort-icon">⇅</span></th>
+          <th data-col="total_effort" class="sortable">Total Effort <span class="sort-icon">⇅</span></th>
+          <th data-col="phase_name" class="sortable">Phase <span class="sort-icon">⇅</span></th>
+          <th data-col="consultant" class="sortable">Consultant <span class="sort-icon">⇅</span></th>
+          <th data-col="planned_start" class="sortable">Planned Start <span class="sort-icon">⇅</span></th>
+          <th data-col="planned_end" class="sortable">Planned End <span class="sort-icon">⇅</span></th>
+          <th data-col="effort_days" class="sortable">Task Effort (d) <span class="sort-icon">⇅</span></th>
+          <th data-col="status" class="sortable">Status <span class="sort-icon">⇅</span></th>
+        </tr>
+      </thead>
+      <tbody id="detail-tbody">
+        <tr><td colspan="9" class="empty-row">Select a schedule above.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="table-footer"><span id="detail-count">—</span></div>
+</section>
+
+<div id="modal-backdrop" class="modal-backdrop hidden"></div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+(function () {
+  "use strict";
+
+  const API = {
+    list:        ()      => fetch("/api/schedule/").then(r => r.json()),
+    get:         (id)    => fetch(`/api/schedule/${id}`).then(r => r.json()),
+    del:         (id)    => fetch(`/api/schedule/${id}`, { method: "DELETE" }).then(r => r.json()),
+    run:         (d)     => fetch("/api/schedule/run", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(d) }).then(r => r.json()),
+    recalculate: (id, d) => fetch(`/api/schedule/${id}/recalculate`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(d) }).then(r => r.json()),
+  };
+
+  let _activeScheduleId = null;
+  let _activeTasks      = [];
+  let _consultantMap    = {};
+  let _itemMap          = {};
+
+  async function loadConsultantMap() {
+    try {
+      const d = await fetch("/api/consultants").then(r => r.json());
+      _consultantMap = {};
+      (d || []).forEach(c => { _consultantMap[c.id] = c.name; });
+    } catch (_) {}
+  }
+
+  async function loadItemMap() {
+    try {
+      const d = await fetch("/api/items/").then(r => r.json());
+      _itemMap = {};
+      (d || []).forEach(i => { _itemMap[i.id] = i; });
+    } catch (_) {}
+  }
+
+  function toast(msg, type) {
+    if (window.showToast) { window.showToast(msg, type); return; }
+    alert(msg);
+  }
+
+  function escHtml(s) {
+    const d = document.createElement("div");
+    d.appendChild(document.createTextNode(String(s ?? "")));
+    return d.innerHTML;
+  }
+
+  function statusBar(msg, type) {
+    const bar = document.getElementById("run-status");
+    bar.textContent = msg;
+    bar.className = "status-bar " + (type || "info");
+    bar.classList.remove("hidden");
+    if (type === "success") setTimeout(() => bar.classList.add("hidden"), 5000);
+  }
+
+  function renderSchedules(rows) {
+    const tbody = document.getElementById("schedules-tbody");
+    if (!rows || !rows.length) {
+      tbody.innerHTML = '<tr><td colspan="7" class="empty-row">No schedules yet.</td></tr>';
+      document.getElementById("schedules-count").textContent = "0 schedules";
+      return;
+    }
+    tbody.innerHTML = rows.map(s => `
+      <tr>
+        <td>${escHtml(String(s.id))}</td>
+        <td>${escHtml(s.name || "—")}</td>
+        <td>${escHtml(s.project_start || "—")}</td>
+        <td>${s.max_parallel ?? "—"}</td>
+        <td><span class="badge badge-${s.status==="complete"?"success":s.status==="partial"?"warning":"secondary"}">${escHtml(s.status||"—")}</span></td>
+        <td>${escHtml(s.created_at ? String(s.created_at).substring(0,16) : "—")}</td>
+        <td>
+          <button class="btn btn-sm btn-secondary sched-view-btn" data-id="${s.id}" data-name="${escHtml(s.name||"Schedule "+s.id)}">View</button>
+          <button class="btn btn-sm btn-danger sched-del-btn" data-id="${s.id}">Del</button>
+        </td>
+      </tr>`).join("");
+    tbody.querySelectorAll(".sched-view-btn").forEach(btn => {
+      btn.addEventListener("click", () => viewSchedule(parseInt(btn.dataset.id), btn.dataset.name));
+    });
+    tbody.querySelectorAll(".sched-del-btn").forEach(btn => {
+      btn.addEventListener("click", () => deleteSchedule(parseInt(btn.dataset.id)));
+    });
+    document.getElementById("schedules-count").textContent = `${rows.length} schedule(s)`;
+  }
+
+  async function loadSchedules() {
+    try {
+      const data = await API.list();
+      if (data.error) throw new Error(data.error);
+      renderSchedules(data);
+    } catch (e) {
+      toast("Failed to load schedules: " + e.message, "error");
+    }
+  }
+
+  async function deleteSchedule(id) {
+    if (!confirm("Delete this schedule and all its tasks?")) return;
+    try {
+      await API.del(id);
+      toast("Schedule deleted.", "success");
+      if (_activeScheduleId === id) {
+        document.getElementById("section-detail").classList.add("hidden");
+        _activeScheduleId = null;
+      }
+      loadSchedules();
+    } catch (e) {
+      toast("Delete failed: " + e.message, "error");
+    }
+  }
+
+  async function viewSchedule(id, name) {
+    _activeScheduleId = id;
+    document.getElementById("detail-title").textContent = name || ("Schedule " + id);
+    document.getElementById("section-detail").classList.remove("hidden");
+    document.getElementById("section-detail").scrollIntoView({ behavior: "smooth" });
+    try {
+      const data = await API.get(id);
+      if (data.error) throw new Error(data.error);
+      _activeTasks = data.tasks || [];
+      renderDetail(_activeTasks, data);
+    } catch (e) {
+      toast("Failed to load schedule detail: " + e.message, "error");
+    }
+  }
+
+  function renderDetail(tasks, scheduleData) {
+    const kpiEl = document.getElementById("detail-kpis");
+    const totalEffort = tasks.reduce((s, t) => s + (t.effort_days || 0), 0);
+    const uniqueItems = new Set(tasks.map(t => t.item_id)).size;
+    const consultantSet = new Set(tasks.filter(t => t.assigned_consultant_id).map(t => t.assigned_consultant_id));
+    const locked = tasks.filter(t => t.is_locked).length;
+    kpiEl.innerHTML = `
+      <div class="kpi-card"><span class="kpi-value">${uniqueItems}</span><span class="kpi-label">Items</span></div>
+      <div class="kpi-card"><span class="kpi-value">${tasks.length}</span><span class="kpi-label">Tasks</span></div>
+      <div class="kpi-card"><span class="kpi-value">${totalEffort}</span><span class="kpi-label">Total Effort (d)</span></div>
+      <div class="kpi-card"><span class="kpi-value">${consultantSet.size||"—"}</span><span class="kpi-label">Consultants Used</span></div>
+      <div class="kpi-card"><span class="kpi-value">${locked}</span><span class="kpi-label">Locked</span></div>`;
+
+    const tbody = document.getElementById("detail-tbody");
+    if (!tasks || !tasks.length) {
+      tbody.innerHTML = '<tr><td colspan="11" class="empty-row">No tasks in this schedule.</td></tr>';
+      document.getElementById("detail-count").textContent = "0 tasks";
+      return;
+    }
+    const _PRIO_NAMES = {1:"Highest",2:"High",3:"Medium",4:"Low",5:"Lowest"};
+    tbody.innerHTML = tasks.map(t => {
+      const item = _itemMap[t.item_id] || {};
+      const cname = _consultantMap[t.assigned_consultant_id] || (t.assigned_consultant_id ? "#"+t.assigned_consultant_id : "—");
+      const pjk = item.jira_key || "—";
+      const prioNum = item.priority;
+      const prioLabel = prioNum ? (_PRIO_NAMES[prioNum] || String(prioNum)) : "—";
+      const ef = item.extra_fields || {};
+      const totalEffort = ef["Total Effort"] ?? "—";
+      // Show child item's Jira status if child key is known;
+      // if no child key (new item to be created), show B_Not Started
+      const childItem = t.jira_child_key ? Object.values(_itemMap).find(i => i.jira_key === t.jira_child_key) : null;
+      const jiraStatus = childItem ? (childItem.status || "B_Not Started") : "B_Not Started";
+      const statusUpper = jiraStatus.toUpperCase();
+      const statusBadge = statusUpper.includes("DONE") || statusUpper.includes("APPROV") || statusUpper.includes("COMPLETE")
+        ? "success"
+        : statusUpper.includes("PROGRESS") || statusUpper.includes("H_IN")
+          ? "warning"
+          : statusUpper.includes("NOT_START") || statusUpper.includes("B_NOT") || statusUpper.includes("NOT START")
+            ? "secondary"
+            : "secondary";
+      return `<tr>
+        <td title="${escHtml(item.summary||"")}">${t.item_id??"—"}</td>
+        <td style="font-size:.8rem">${escHtml(pjk)}</td>
+        <td>${escHtml(t.jira_child_key||"—")}</td>
+        <td>${escHtml(prioLabel)}</td>
+        <td style="text-align:right">${totalEffort}</td>
+        <td>${escHtml(t.phase_name||"—")}</td>
+        <td style="font-size:.8rem">${escHtml(cname)}</td>
+        <td>${escHtml(t.planned_start||"—")}</td>
+        <td>${escHtml(t.planned_end||"—")}</td>
+        <td style="text-align:right">${t.effort_days != null ? t.effort_days.toFixed(1) : "—"}</td>
+        <td><span class="badge badge-${statusBadge}" title="${escHtml(jiraStatus)}">${escHtml(jiraStatus)}</span></td>
+      </tr>`;
+    }).join("");
+    document.getElementById("detail-count").textContent = `${tasks.length} task(s)`;
+
+    // Wire up sortable headers
+    document.querySelectorAll("#detail-thead-row th.sortable").forEach(th => {
+      th.style.cursor = "pointer";
+      th.addEventListener("click", () => sortDetailTable(th.dataset.col, th));
+    });
+  }
+
+  let _sortCol = null;
+  let _sortAsc = true;
+
+  function sortDetailTable(col, thEl) {
+    if (_sortCol === col) {
+      _sortAsc = !_sortAsc;
+    } else {
+      _sortCol = col;
+      _sortAsc = true;
+    }
+    // Update sort icons
+    document.querySelectorAll("#detail-thead-row th.sortable .sort-icon").forEach(el => { el.textContent = "⇅"; });
+    thEl.querySelector(".sort-icon").textContent = _sortAsc ? "↑" : "↓";
+
+    const _PRIO_NAMES2 = {1:"Highest",2:"High",3:"Medium",4:"Low",5:"Lowest"};
+    const sorted = [..._activeTasks].sort((a, b) => {
+      let va, vb;
+      const ia = _itemMap[a.item_id] || {}, ib = _itemMap[b.item_id] || {};
+      if (col === "jira_key") {
+        va = ia.jira_key || ""; vb = ib.jira_key || "";
+      } else if (col === "consultant") {
+        va = (_consultantMap[a.assigned_consultant_id] || ""); vb = (_consultantMap[b.assigned_consultant_id] || "");
+      } else if (col === "priority") {
+        va = ia.priority ?? 99; vb = ib.priority ?? 99;
+        return _sortAsc ? (va - vb) : (vb - va);
+      } else if (col === "total_effort") {
+        va = Number((ia.extra_fields||{})["Total Effort"] ?? 0);
+        vb = Number((ib.extra_fields||{})["Total Effort"] ?? 0);
+        return _sortAsc ? (va - vb) : (vb - va);
+      } else {
+        va = a[col] ?? ""; vb = b[col] ?? "";
+      }
+      if (col === "effort_days" || col === "item_id") {
+        return _sortAsc ? (Number(va) - Number(vb)) : (Number(vb) - Number(va));
+      }
+      return _sortAsc ? String(va).localeCompare(String(vb)) : String(vb).localeCompare(String(va));
+    });
+
+    // Re-render only tbody rows (keep KPIs)
+    const tbody = document.getElementById("detail-tbody");
+    tbody.innerHTML = sorted.map(t => {
+      const item = _itemMap[t.item_id] || {};
+      const cname = _consultantMap[t.assigned_consultant_id] || (t.assigned_consultant_id ? "#"+t.assigned_consultant_id : "—");
+      const pjk = item.jira_key || "—";
+      const prioNum = item.priority;
+      const prioLabel = prioNum ? (_PRIO_NAMES2[prioNum] || String(prioNum)) : "—";
+      const ef = item.extra_fields || {};
+      const totalEffort = ef["Total Effort"] ?? "—";
+      return `<tr>
+        <td title="${escHtml(item.summary||"")}">${t.item_id??"—"}</td>
+        <td style="font-size:.8rem">${escHtml(pjk)}</td>
+        <td>${escHtml(t.jira_child_key||"—")}</td>
+        <td>${escHtml(prioLabel)}</td>
+        <td style="text-align:right">${totalEffort}</td>
+        <td>${escHtml(t.phase_name||"—")}</td>
+        <td style="font-size:.8rem">${escHtml(cname)}</td>
+        <td>${escHtml(t.planned_start||"—")}</td>
+        <td>${escHtml(t.planned_end||"—")}</td>
+        <td style="text-align:right">${t.effort_days != null ? t.effort_days.toFixed(1) : "—"}</td>
+        <td><span class="badge badge-${t.status==="done"?"success":t.status==="in_progress"?"warning":"secondary"}">${escHtml(t.status||"planned")}</span></td>
+      </tr>`;
+    }).join("");
+  }
+
+  async function runSchedule() {
+    const start    = document.getElementById("sched-start").value;
+    const parallel = parseInt(document.getElementById("sched-parallel").value, 10) || 3;
+    const nameVal  = document.getElementById("sched-name").value.trim();
+    if (!start) { toast("Project start date is required.", "error"); return; }
+    const payload = { project_start: start, max_parallel: parallel };
+    if (nameVal) payload.name = nameVal;
+    statusBar("Running optimiser…", "info");
+    document.getElementById("btn-run-schedule").disabled = true;
+    try {
+      const result = await API.run(payload);
+      if (result.error) throw new Error(result.error);
+      const failMsg = result.failed_items && result.failed_items.length
+        ? ` (${result.failed_items.length} item(s) not matched to a workflow)` : "";
+      statusBar(`Schedule created (ID ${result.schedule_id}): ${result.tasks_created} task(s).${failMsg}`, "success");
+      toast("Schedule generated.", "success");
+      loadSchedules();
+    } catch (e) {
+      statusBar("Optimiser failed: " + e.message, "error");
+      toast("Optimiser failed: " + e.message, "error");
+    } finally {
+      document.getElementById("btn-run-schedule").disabled = false;
+    }
+  }
+
+  async function recalculate() {
+    if (!_activeScheduleId) return;
+    const start    = document.getElementById("sched-start").value;
+    const parallel = parseInt(document.getElementById("sched-parallel").value, 10) || 3;
+    try {
+      const result = await API.recalculate(_activeScheduleId, { project_start: start || undefined, max_parallel: parallel });
+      if (result.error) throw new Error(result.error);
+      _activeTasks = result.tasks || [];
+      renderDetail(_activeTasks, result);
+      toast("Schedule recalculated.", "success");
+    } catch (e) {
+      toast("Recalculate failed: " + e.message, "error");
+    }
+  }
+
+  function exportCsv() {
+    if (!_activeTasks.length) { toast("No tasks to export.", "error"); return; }
+    const _PRIO_NAMES3 = {1:"Highest",2:"High",3:"Medium",4:"Low",5:"Lowest"};
+    const header = ["item_id","jira_key","jira_child_key","priority","total_effort","phase_name","consultant","planned_start","planned_end","effort_days","status"];
+    const rows = _activeTasks.map(t => {
+      const item = _itemMap[t.item_id] || {};
+      const cname = _consultantMap[t.assigned_consultant_id] || "";
+      const pjk = item.jira_key || "";
+      const prioLabel = item.priority ? (_PRIO_NAMES3[item.priority] || String(item.priority)) : "";
+      const totalEffort = String((item.extra_fields||{})["Total Effort"] ?? "");
+      return header.map(k => {
+        let v;
+        if (k==="jira_key") v=pjk;
+        else if (k==="consultant") v=cname;
+        else if (k==="priority") v=prioLabel;
+        else if (k==="total_effort") v=totalEffort;
+        else v=String(t[k]??"");
+        return `"${v.replace(/"/g,'""')}"`;
+      }).join(",");
+    });
+    const csv = [header.join(","), ...rows].join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement("a");
+    a.href = url;
+    a.download = `schedule_${_activeScheduleId}_tasks.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  /* ── Event listeners ── */
+  document.getElementById("btn-run-schedule").addEventListener("click", runSchedule);
+  document.getElementById("btn-refresh-schedules").addEventListener("click", loadSchedules);
+  document.getElementById("btn-recalculate").addEventListener("click", recalculate);
+  document.getElementById("btn-close-detail").addEventListener("click", () => {
+    document.getElementById("section-detail").classList.add("hidden");
+    _activeScheduleId = null;
+  });
+  document.getElementById("btn-export-csv").addEventListener("click", exportCsv);
+
+  /* ── Default start date: today ── */
+  document.getElementById("sched-start").value = new Date().toISOString().substring(0, 10);
+
+  /* ── Init ── */
+  Promise.all([loadConsultantMap(), loadItemMap()]).then(() => loadSchedules());
+})();
+</script>
+{% endblock %}

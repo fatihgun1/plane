@@ -1,0 +1,568 @@
+<script>
+/* ──────────────────────────────────────────────────────────────────
+   Settings page logic
+────────────────────────────────────────────────────────────────── */
+(function () {
+  "use strict";
+
+  /* ── helpers ── */
+  function toast(msg, type) {
+    if (window.showToast) { window.showToast(msg, type); return; }
+    alert(msg);
+  }
+
+  function statusBar(elId, msg, type) {
+    const el = document.getElementById(elId);
+    if (!el) return;
+    el.textContent = msg;
+    el.className = "status-bar " + (type || "info");
+    el.classList.remove("hidden");
+    if (type === "success") setTimeout(() => el.classList.add("hidden"), 4000);
+  }
+
+  function escHtml(s) {
+    const d = document.createElement("div");
+    d.appendChild(document.createTextNode(String(s ?? "")));
+    return d.innerHTML;
+  }
+
+  /* ── Tabs ── */
+  document.querySelectorAll(".tab-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
+      document.querySelectorAll(".tab-panel").forEach(p => p.classList.add("hidden"));
+      btn.classList.add("active");
+      document.getElementById(btn.dataset.tab).classList.remove("hidden");
+      // Always reload field map from DB when tab becomes visible
+      if (btn.dataset.tab === "tab-fieldmap") {
+        _fieldMapLoaded = false;
+        loadFieldMap();
+      }
+    });
+  });
+
+  /* ═══════════════════════════════════════════
+     Settings API
+  ═══════════════════════════════════════════ */
+  const SAPI = {
+    get:   ()    => fetch("/api/settings").then(r => r.json()),
+    save:  (obj) => fetch("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(obj),
+    }).then(r => r.json()),
+  };
+
+  /* ── Load all settings on page load ── */
+  async function loadSettings() {
+    try {
+      const s = await SAPI.get();
+      setVal("s-default-jql",        s["import.default_jql"]    || "");
+      setVal("s-default-max-results",s["import.max_results"]    || "200");
+      setVal("s-issue-type-filter",  s["import.issue_type_filter"] || "");
+      setVal("s-priority-map",       s["import.priority_map"]   || "");
+      setVal("s-status-map",         s["import.status_map"]     || "");
+      setVal("s-type-workflow-map",  s["import.type_workflow_map"] || "");
+      setVal("s-max-parallel",       s["scheduler.max_parallel"] || "3");
+      setVal("s-daily-capacity",     s["scheduler.daily_capacity"] || "1.0");
+      setVal("s-effort-scale",       s["scheduler.effort_scale"] || "1.0");
+      setVal("s-priority-order",     s["scheduler.priority_order"] || "");
+      setVal("s-role-match",         s["scheduler.role_match"]  || "");
+
+      const creds = await fetch("/api/settings/jira-credentials").then(r => r.json());
+      setVal("s-jira-base-url",    creds.base_url || "");
+      setVal("s-jira-project-key", creds.project_key || "");
+      setVal("s-jira-email",       creds.email || "");
+      if (creds.has_token) {
+        document.getElementById("s-jira-token").placeholder = "••••••••  (saved — leave blank to keep)";
+      }
+    } catch (e) {
+      toast("Failed to load settings: " + e.message, "error");
+    }
+  }
+
+  function setVal(id, val) {
+    const el = document.getElementById(id);
+    if (el) el.value = val;
+  }
+  function getVal(id) {
+    const el = document.getElementById(id);
+    return el ? el.value.trim() : "";
+  }
+
+  /* ═══════════════════════════════════════════
+     Save handlers
+  ═══════════════════════════════════════════ */
+
+  document.getElementById("btn-save-jira").addEventListener("click", async () => {
+    try {
+      // Full Jira connection is saved per-user (base URL, key, email, token)
+      const credsRes = await fetch("/api/settings/jira-credentials", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          base_url:    getVal("s-jira-base-url"),
+          project_key: getVal("s-jira-project-key"),
+          email:       getVal("s-jira-email"),
+          token:       getVal("s-jira-token"),
+        }),
+      }).then(r => r.json());
+      if (credsRes.error) throw new Error(credsRes.error);
+      setVal("s-jira-token", "");
+      document.getElementById("s-jira-token").placeholder = "••••••••  (saved — leave blank to keep)";
+      toast("Jira settings saved.", "success");
+    } catch (e) { toast("Save failed: " + e.message, "error"); }
+  });
+
+  document.getElementById("btn-save-import").addEventListener("click", async () => {
+    try {
+      const res = await SAPI.save({
+        "import.default_jql":       getVal("s-default-jql"),
+        "import.max_results":       getVal("s-default-max-results"),
+        "import.issue_type_filter": getVal("s-issue-type-filter"),
+        "import.priority_map":      getVal("s-priority-map"),
+        "import.status_map":        getVal("s-status-map"),
+        "import.type_workflow_map": getVal("s-type-workflow-map"),
+      });
+      if (res.error) throw new Error(res.error);
+      toast("Import settings saved.", "success");
+    } catch (e) { toast("Save failed: " + e.message, "error"); }
+  });
+
+  document.getElementById("btn-save-scheduler").addEventListener("click", async () => {
+    try {
+      const res = await SAPI.save({
+        "scheduler.max_parallel":   getVal("s-max-parallel"),
+        "scheduler.daily_capacity": getVal("s-daily-capacity"),
+        "scheduler.effort_scale":   getVal("s-effort-scale"),
+        "scheduler.priority_order": getVal("s-priority-order"),
+        "scheduler.role_match":     getVal("s-role-match"),
+      });
+      if (res.error) throw new Error(res.error);
+      toast("Scheduler settings saved.", "success");
+    } catch (e) { toast("Save failed: " + e.message, "error"); }
+  });
+
+  /* ═══════════════════════════════════════════
+     Test Jira connection
+  ═══════════════════════════════════════════ */
+  document.getElementById("btn-test-jira").addEventListener("click", async () => {
+    statusBar("jira-test-result", "Testing connection…", "info");
+    try {
+      const res = await fetch("/api/settings/fields/discover?custom_only=false");
+      if (res.ok) {
+        const fields = await res.json();
+        if (fields.error) throw new Error(fields.error);
+        statusBar("jira-test-result", `✓ Connected — ${fields.length} fields available.`, "success");
+      } else {
+        throw new Error("HTTP " + res.status);
+      }
+    } catch (e) {
+      statusBar("jira-test-result", "✗ Connection failed: " + e.message, "error");
+    }
+  });
+
+  /* ═══════════════════════════════════════════
+     Field Map tab
+  ═══════════════════════════════════════════ */
+  const FM_API = {
+    list:     () => fetch("/api/settings/fields").then(r => r.json()),
+    save:     (rows) => fetch("/api/settings/fields", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(rows),
+    }).then(r => r.json()),
+    discover: () => fetch("/api/settings/fields/discover").then(r => r.json()),
+  };
+
+  const DEFAULT_LABELS = [
+    "module", "stream", "story points", "epic link", "planned start", "planned end"
+  ];
+
+  let _discoveredFields = [];
+  let _selectedFmRow = null;
+  let _fieldMapLoaded = false;
+
+  const PLANE_TARGETS = [
+    ["description", "Description (table)"],
+    ["labels",      "Labels"],
+    ["cycle",       "Cycle (Sprint)"],
+    ["priority",    "Priority"],
+    ["start_date",  "Start date"],
+    ["target_date", "Target date"],
+    ["skip",        "Skip"],
+  ];
+
+  function buildFmRow(label, fieldId, notes, planeTarget) {
+    const target = planeTarget || "description";
+    const options = PLANE_TARGETS.map(([v, t]) =>
+      `<option value="${v}" ${v === target ? "selected" : ""}>${t}</option>`).join("");
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td><input class="fm-label" type="text" value="${escHtml(label)}"
+            placeholder="field label" style="width:100%;box-sizing:border-box" /></td>
+      <td><input class="fm-field-id" type="text" value="${escHtml(fieldId)}"
+            placeholder="customfield_XXXXX" style="width:100%;box-sizing:border-box" /></td>
+      <td><input class="fm-notes" type="text" value="${escHtml(notes)}"
+            placeholder="what this field means" style="width:100%;box-sizing:border-box" /></td>
+      <td><select class="fm-plane-target" title="Where this field goes during a Plane migration"
+            style="width:100%;box-sizing:border-box">${options}</select></td>
+      <td><button class="btn btn-sm btn-danger fm-del-btn" title="Remove">✕</button></td>`;
+    tr.querySelector(".fm-del-btn").addEventListener("click", () => tr.remove());
+    tr.addEventListener("click", () => {
+      document.querySelectorAll("#fieldmap-tbody tr").forEach(r => r.classList.remove("row-selected"));
+      tr.classList.add("row-selected");
+      _selectedFmRow = tr;
+    });
+    return tr;
+  }
+
+  async function loadFieldMap() {
+    if (_fieldMapLoaded) return;
+    const tbody = document.getElementById("fieldmap-tbody");
+    tbody.innerHTML = '<tr><td colspan="4" class="empty-row">Loading…</td></tr>';
+    _selectedFmRow = null;
+    try {
+      const rows = await FM_API.list();
+      tbody.innerHTML = "";
+      const usedLabels = (rows || []).map(r => r.field_label);
+      (rows || []).forEach(r => tbody.appendChild(buildFmRow(r.field_label, r.jira_field_id, r.notes || "", r.plane_target)));
+      // Only seed default labels if the field map is empty (first use)
+      if (!usedLabels.length) {
+        DEFAULT_LABELS.forEach(lbl => tbody.appendChild(buildFmRow(lbl, "", "", "")));
+      }
+      _fieldMapLoaded = true;
+    } catch (e) {
+      tbody.innerHTML = `<tr><td colspan="4" class="empty-row">Error: ${escHtml(e.message)}</td></tr>`;
+    }
+  }
+
+  document.getElementById("btn-add-fieldmap-row").addEventListener("click", () => {
+    document.getElementById("fieldmap-tbody").appendChild(buildFmRow("", "", "", ""));
+  });
+
+  document.getElementById("btn-save-fieldmap").addEventListener("click", async () => {
+    const rows = [];
+    document.querySelectorAll("#fieldmap-tbody tr").forEach(tr => {
+      const label   = (tr.querySelector(".fm-label")?.value    || "").trim();
+      const fieldId = (tr.querySelector(".fm-field-id")?.value || "").trim();
+      const notes   = (tr.querySelector(".fm-notes")?.value    || "").trim();
+      const planeTarget = tr.querySelector(".fm-plane-target")?.value || "description";
+      if (label && fieldId) rows.push({ field_label: label, jira_field_id: fieldId, notes, plane_target: planeTarget });
+    });
+    if (!rows.length) { toast("No valid rows to save.", "error"); return; }
+    try {
+      const res = await FM_API.save(rows);
+      if (res.error) throw new Error(res.error);
+      toast(`Saved ${res.saved} field map row(s).`, "success");
+      _fieldMapLoaded = false; // force reload next time
+    } catch (e) {
+      toast("Save failed: " + e.message, "error");
+    }
+  });
+
+  document.getElementById("btn-discover-fields").addEventListener("click", async () => {
+    const btn = document.getElementById("btn-discover-fields");
+    btn.disabled = true;
+    statusBar("discover-status", "Discovering fields…", "info");
+    try {
+      const fields = await FM_API.discover();
+      if (fields.error) throw new Error(fields.error);
+      _discoveredFields = fields;
+
+      const tbody = document.getElementById("fieldmap-tbody");
+      // Remove the "empty" placeholder seed rows so auto-fill starts clean-ish
+      const mappedIds = new Set(
+        [...tbody.querySelectorAll(".fm-field-id")].map(i => i.value.trim()).filter(Boolean)
+      );
+      let added = 0;
+      fields.forEach(f => {
+        if (mappedIds.has(f.id)) return;   // already mapped by id — keep user's row
+        // Fill an existing empty row whose label matches the field name…
+        let filled = false;
+        tbody.querySelectorAll("tr").forEach(tr => {
+          if (filled) return;
+          const lbl = tr.querySelector(".fm-label"), fid = tr.querySelector(".fm-field-id");
+          if (lbl && fid && !fid.value.trim() &&
+              lbl.value.trim().toLowerCase() === (f.name || "").toLowerCase()) {
+            fid.value = f.id;
+            const tgt = tr.querySelector(".fm-plane-target");
+            if (tgt) tgt.value = f.suggested_target || "description";
+            filled = true;
+          }
+        });
+        if (!filled) {
+          tbody.appendChild(buildFmRow(f.name, f.id, "", f.suggested_target || "description"));
+          added++;
+        }
+      });
+      // Keep the manual picker available for fine-tuning
+      const sel = document.getElementById("discovered-field-select");
+      sel.innerHTML = '<option value="">— choose a Jira field —</option>' +
+        fields.map(f => `<option value="${escHtml(f.id)}">${escHtml(f.name)} (${escHtml(f.id)})</option>`).join("");
+      document.getElementById("discover-picker").classList.remove("hidden");
+      statusBar("discover-status",
+        `✓ Found ${fields.length} custom fields — auto-mapped ${added} new one(s) with suggested targets. ` +
+        `Review the Plane Target column, then Save.`, "success");
+    } catch (e) {
+      statusBar("discover-status", "Discovery failed: " + e.message, "error");
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  document.getElementById("btn-apply-discovered").addEventListener("click", () => {
+    if (!_selectedFmRow) { toast("Click a row first, then apply.", "error"); return; }
+    const fieldId = document.getElementById("discovered-field-select").value;
+    if (!fieldId) { toast("Select a Jira field from the dropdown.", "error"); return; }
+    const field = _discoveredFields.find(f => f.id === fieldId);
+    _selectedFmRow.querySelector(".fm-field-id").value = fieldId;
+    if (field && !_selectedFmRow.querySelector(".fm-notes").value) {
+      _selectedFmRow.querySelector(".fm-notes").value = field.name || "";
+    }
+    toast("Applied: " + fieldId, "success");
+  });
+
+  /* ═══════════════════════════════════════════
+     Workflow tab
+  ═══════════════════════════════════════════ */
+  let _workflowData = [];
+
+  async function loadWorkflows() {
+    const container = document.getElementById("workflow-panels");
+    container.innerHTML = '<p class="hint">Loading…</p>';
+    try {
+      const [data, settings] = await Promise.all([
+        fetch("/api/settings/workflows").then(r => r.json()),
+        fetch("/api/settings").then(r => r.json()),
+      ]);
+      // Parse saved workflow.type_map and override applies_to per template
+      const typeMapRaw = settings["workflow.type_map"] || "";
+      const savedTypeMap = {};  // { template_name: ["IssueType1", "IssueType2"] }
+      for (const line of typeMapRaw.split("\n")) {
+        const trimmed = line.trim();
+        if (!trimmed || !trimmed.includes("=")) continue;
+        const eqIdx = trimmed.lastIndexOf("=");
+        const types = trimmed.slice(0, eqIdx).split(",").map(s => s.trim()).filter(Boolean);
+        const tname = trimmed.slice(eqIdx + 1).trim();
+        if (tname) savedTypeMap[tname] = types;
+      }
+      // Apply saved mappings and child relation settings to the data
+      data.forEach(wf => {
+        if (savedTypeMap[wf.template_name] !== undefined) {
+          wf.applies_to = savedTypeMap[wf.template_name];
+        }
+        wf.child_relation = settings[`workflow.${wf.template_name}.child_relation`] || "subtasks";
+        wf.link_type = settings[`workflow.${wf.template_name}.link_type`] || "";
+      });
+      _workflowData = data;
+      renderWorkflows(data);
+    } catch (e) {
+      container.innerHTML = `<p class="hint" style="color:var(--danger)">Failed: ${escHtml(e.message)}</p>`;
+    }
+  }
+
+  const ACTIVITY_LABELS = {
+    design: "Design",
+    development: "Development",
+    data_migration: "Data Migration",
+    authorization: "Authorization",
+    testing: "Testing",
+    cutover: "Cut-Over",
+  };
+
+  function renderWorkflows(data) {
+    const container = document.getElementById("workflow-panels");
+    container.innerHTML = "";
+    data.forEach(wf => {
+      const label = ACTIVITY_LABELS[wf.template_name] || wf.template_name;
+      const div = document.createElement("div");
+      div.style.cssText = "background:#fafbff;border:1px solid var(--border);border-radius:6px;padding:1rem";
+      div.innerHTML = `
+        <h3 style="font-size:.95rem;font-weight:700;color:var(--navy);margin-bottom:.75rem">
+          ${escHtml(label)} <span style="font-weight:400;font-size:.8rem;color:var(--text-muted)">(${escHtml(wf.template_name)})</span>
+        </h3>
+        <div style="display:flex;gap:1rem;flex-wrap:wrap;margin-bottom:1rem;align-items:flex-start">
+          <label class="field-label" style="flex:2;min-width:220px">
+            Parent Jira Issue Types (comma-separated)
+            <input type="text" class="wf-issue-types" data-template="${escHtml(wf.template_name)}"
+                   value="${escHtml((wf.applies_to || []).join(", "))}"
+                   placeholder="e.g. Geliştirme, Development" />
+            <span class="hint">Issue types that act as parents for this activity's steps.</span>
+          </label>
+          <label class="field-label" style="flex:1;min-width:150px">
+            Child Relation
+            <select class="wf-child-relation" data-template="${escHtml(wf.template_name)}"
+                    style="padding:.3rem .5rem;border:1px solid var(--border);border-radius:4px;font-size:.82rem">
+              <option value="subtasks"${(wf.child_relation||'subtasks')==='subtasks'?' selected':''}>Subtasks</option>
+              <option value="linked"${(wf.child_relation||'')==='linked'?' selected':''}>Linked Issues</option>
+            </select>
+            <span class="hint">How parent links to phase tasks.</span>
+          </label>
+          <label class="field-label wf-link-type-wrap" data-template="${escHtml(wf.template_name)}"
+                 style="flex:1;min-width:180px;${(wf.child_relation||'subtasks')==='linked'?'':'display:none'}">
+            Link Type
+            <input type="text" class="wf-link-type" data-template="${escHtml(wf.template_name)}"
+                   value="${escHtml(wf.link_type||'')}"
+                   placeholder="e.g. is parent task of"
+                   style="padding:.3rem .5rem;border:1px solid var(--border);border-radius:4px;font-size:.82rem;width:100%;box-sizing:border-box" />
+            <span class="hint">Jira link type name (from Jira admin).</span>
+          </label>
+        </div>
+        <table class="data-table" style="max-width:960px">
+          <thead>
+            <tr>
+              <th style="width:22%">Phase / Step</th>
+              <th style="width:18%">Jira Issue Type</th>
+              <th style="width:9%;text-align:center" title="When checked: the next step cannot start until this step completes.">Blocks Next ⓘ</th>
+              <th style="width:14%">Effort Source ⓘ</th>
+              <th style="width:7%;text-align:right">Effort %</th>
+              <th style="width:28%" title="Phase names (comma-separated) that CANNOT start until this phase completes. Overrides sequential blocking for parallel phases.">Blocks Phases ⓘ</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${wf.phases.map(p => `
+              <tr>
+                <td style="font-weight:500">${escHtml(p.name)}</td>
+                <td>
+                  <input type="text"
+                         class="wf-issue-type-input"
+                         data-template="${escHtml(wf.template_name)}"
+                         data-phase="${escHtml(p.name)}"
+                         value="${escHtml(p.jira_issue_type || '')}"
+                         placeholder="e.g. Sub-task, Task"
+                         style="width:100%;padding:.25rem .4rem;border:1px solid var(--border);border-radius:4px;font-size:.82rem;box-sizing:border-box" />
+                </td>
+                <td style="text-align:center">
+                  <input type="checkbox"
+                         class="wf-blocking-input"
+                         data-template="${escHtml(wf.template_name)}"
+                         data-phase="${escHtml(p.name)}"
+                         ${p.is_blocking ? "checked" : ""}
+                         title="☑ Blocks next step (sequential) — next step waits for this one&#10;☐ Does NOT block next step (parallel) — next step can start alongside this one" />
+                </td>
+                <td>
+                  <input type="text"
+                         class="wf-effort-source-input"
+                         data-template="${escHtml(wf.template_name)}"
+                         data-phase="${escHtml(p.name)}"
+                         value="${escHtml(p.effort_source || '')}"
+                         placeholder="e.g. Module Effort"
+                         title="Field label from Field Map to use as base effort. Leave blank to use item's total effort_days."
+                         style="width:100%;padding:.25rem .4rem;border:1px solid var(--border);border-radius:4px;font-size:.82rem;box-sizing:border-box" />
+                </td>
+                <td style="text-align:right">
+                  <input type="number"
+                         class="wf-effort-input"
+                         data-template="${escHtml(wf.template_name)}"
+                         data-phase="${escHtml(p.name)}"
+                         data-default="${p.default_effort_factor}"
+                         value="${Math.round(p.effort_factor * 100)}"
+                         min="0" max="200" step="1"
+                         style="width:55px;text-align:right;padding:.25rem .4rem;border:1px solid var(--border);border-radius:4px;font-size:.82rem"
+                         title="Default: ${Math.round(p.default_effort_factor * 100)}%" /> %
+                </td>
+                <td>
+                  <input type="text"
+                         class="wf-blocks-phases-input"
+                         data-template="${escHtml(wf.template_name)}"
+                         data-phase="${escHtml(p.name)}"
+                         value="${escHtml(p.blocks_phases || '')}"
+                         placeholder="e.g. Consultant Test, User Test"
+                         title="Phase names blocked by this phase (comma-separated). These phases will wait until this phase ends."
+                         style="width:100%;padding:.25rem .4rem;border:1px solid var(--border);border-radius:4px;font-size:.82rem;box-sizing:border-box" />
+                </td>
+              </tr>`).join("")}
+          </tbody>
+        </table>`;
+      container.appendChild(div);
+
+      // Wire up child relation toggle — show/hide link type field
+      const relSel = div.querySelector(`.wf-child-relation[data-template="${wf.template_name}"]`);
+      const linkWrap = div.querySelector(`.wf-link-type-wrap[data-template="${wf.template_name}"]`);
+      if (relSel && linkWrap) {
+        relSel.addEventListener("change", () => {
+          linkWrap.style.display = relSel.value === "linked" ? "" : "none";
+        });
+      }
+    });
+  }
+
+  async function saveWorkflows() {
+    // 1. Save issue type mappings via app_settings
+    const typeMapLines = [];
+    document.querySelectorAll(".wf-issue-types").forEach(inp => {
+      const tname = inp.dataset.template;
+      const types = inp.value.split(",").map(s => s.trim()).filter(Boolean);
+      if (types.length) typeMapLines.push(`${types.join(",")}=${tname}`);
+    });
+    // 2. Collect effort + issue type + blocking per phase
+    const effortEntries = [];
+    document.querySelectorAll(".wf-effort-input").forEach(inp => {
+      const pct = parseFloat(inp.value);
+      if (isNaN(pct)) return;
+      const tname = inp.dataset.template;
+      const pname = inp.dataset.phase;
+      // Find matching issue type and blocking inputs
+      const jitInp = document.querySelector(`.wf-issue-type-input[data-template="${tname}"][data-phase="${CSS.escape(pname)}"]`);
+      const blkInp = document.querySelector(`.wf-blocking-input[data-template="${tname}"][data-phase="${CSS.escape(pname)}"]`);
+      const esInp  = document.querySelector(`.wf-effort-source-input[data-template="${tname}"][data-phase="${CSS.escape(pname)}"]`);
+      const bpInp  = document.querySelector(`.wf-blocks-phases-input[data-template="${tname}"][data-phase="${CSS.escape(pname)}"]`);
+      effortEntries.push({
+        template_name: tname,
+        phase_name:    pname,
+        effort_factor: pct / 100,
+        jira_issue_type: jitInp ? (jitInp.value.trim() || null) : null,
+        is_blocking:     blkInp ? blkInp.checked : true,
+        effort_source:   esInp  ? (esInp.value.trim() || null) : null,
+        blocks_phases:   bpInp  ? (bpInp.value.trim() || null) : null,
+      });
+    });
+    // 3. Collect child relation settings per template
+    const childSettings = { "workflow.type_map": typeMapLines.join("\n") };
+    document.querySelectorAll(".wf-child-relation").forEach(sel => {
+      const tname = sel.dataset.template;
+      childSettings[`workflow.${tname}.child_relation`] = sel.value;
+    });
+    document.querySelectorAll(".wf-link-type").forEach(inp => {
+      const tname = inp.dataset.template;
+      childSettings[`workflow.${tname}.link_type`] = inp.value.trim();
+    });
+
+    try {
+      const [r1, r2] = await Promise.all([
+        fetch("/api/settings", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(childSettings),
+        }).then(r => r.json()),
+        fetch("/api/settings/workflows/effort", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(effortEntries),
+        }).then(r => r.json()),
+      ]);
+      if (r1.error) throw new Error(r1.error);
+      if (r2.error) throw new Error(r2.error);
+      toast(`Workflow settings saved (${r2.saved} effort overrides).`, "success");
+    } catch (e) {
+      toast("Save failed: " + e.message, "error");
+    }
+  }
+
+  document.getElementById("btn-reload-workflows").addEventListener("click", () => {
+    loadWorkflows();
+  });
+  document.getElementById("btn-save-workflows").addEventListener("click", saveWorkflows);
+
+  // Attach workflow tab lazy-load
+  document.querySelectorAll(".tab-btn").forEach(btn => {
+    if (btn.dataset.tab === "tab-workflow") {
+      btn.addEventListener("click", loadWorkflows);
+    }
+  });
+
+  /* ── Init ── */
+  loadSettings();
+})();
+</script>

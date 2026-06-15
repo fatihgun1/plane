@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — NTT-PMO Optimization Tool{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Optimization Dashboard</h1>
+  <p class="sub">Overview of the scheduling workspace — items, consultants, schedules & holidays.</p>
+</div>
+
+<!-- ── Summary tiles ─────────────────────────────────────────────── -->
+<section class="summary-tiles" id="summary-tiles">
+  <a class="tile" href="{{ request.script_root }}/items">
+    <div class="tile-icon">📋</div>
+    <div class="tile-value" id="tile-items">—</div>
+    <div class="tile-label">Work Items</div>
+  </a>
+  <a class="tile" href="{{ request.script_root }}/consultants">
+    <div class="tile-icon">👤</div>
+    <div class="tile-value" id="tile-consultants">—</div>
+    <div class="tile-label">Consultants</div>
+  </a>
+  <a class="tile" href="{{ request.script_root }}/schedules">
+    <div class="tile-icon">📅</div>
+    <div class="tile-value" id="tile-schedules">—</div>
+    <div class="tile-label">Schedules</div>
+  </a>
+  <a class="tile" href="{{ request.script_root }}/holidays">
+    <div class="tile-icon">🏖</div>
+    <div class="tile-value" id="tile-holidays">—</div>
+    <div class="tile-label">Holidays</div>
+  </a>
+</section>
+
+<!-- ── Quick-action cards ─────────────────────────────────────────── -->
+<div class="quick-cards">
+  <section class="card">
+    <div class="card-header">
+      <h2>Work Items</h2>
+      <div class="card-actions">
+        <a href="{{ request.script_root }}/items" class="btn btn-secondary">Open →</a>
+      </div>
+    </div>
+    <p class="card-desc">Import backlog items from Jira or a spreadsheet, review effort estimates and priorities, then feed them into the scheduler.</p>
+  </section>
+
+  <section class="card">
+    <div class="card-header">
+      <h2>Consultants</h2>
+      <div class="card-actions">
+        <a href="{{ request.script_root }}/consultants" class="btn btn-secondary">Open →</a>
+      </div>
+    </div>
+    <p class="card-desc">Manage consultant profiles, roles, module assignments, daily rates and availability windows.</p>
+  </section>
+
+  <section class="card">
+    <div class="card-header">
+      <h2>Schedules</h2>
+      <div class="card-actions">
+        <a href="{{ request.script_root }}/schedules" class="btn btn-primary">Run Schedule →</a>
+      </div>
+    </div>
+    <p class="card-desc">Run the optimiser to produce a schedule, review Gantt views, adjust task assignments, and push planned dates back to Jira.</p>
+  </section>
+
+  <section class="card">
+    <div class="card-header">
+      <h2>Holidays</h2>
+      <div class="card-actions">
+        <a href="{{ request.script_root }}/holidays" class="btn btn-secondary">Open →</a>
+      </div>
+    </div>
+    <p class="card-desc">Define public holidays and consultant-specific leave so the scheduler accounts for non-working days automatically.</p>
+  </section>
+</div>
+
+<!-- ── System status ─────────────────────────────────────────────── -->
+<section class="card" id="section-status">
+  <div class="card-header">
+    <h2>System</h2>
+    <button class="btn btn-secondary" id="btn-refresh-summary">↺ Refresh</button>
+  </div>
+  <div id="system-status-msg" class="hint" style="padding:.5rem 0">Checking…</div>
+  <div class="key-value-grid" id="kv-grid" style="margin-top:.5rem"></div>
+</section>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+(function () {
+  "use strict";
+
+  function setTile(id, val) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = val ?? "—";
+  }
+
+  async function loadSummary() {
+    const statusMsg = document.getElementById("system-status-msg");
+    const kvGrid    = document.getElementById("kv-grid");
+    try {
+      const r   = await fetch("/api/summary");
+      const data = await r.json();
+      setTile("tile-items",       data.items       ?? 0);
+      setTile("tile-consultants", data.consultants  ?? 0);
+      setTile("tile-schedules",   data.schedules    ?? 0);
+      setTile("tile-holidays",    data.holidays     ?? 0);
+
+      statusMsg.textContent = "Database reachable ✓";
+      statusMsg.style.color = "var(--success, #28a745)";
+
+      // Extra fields returned by summary (future-proof)
+      const extra = Object.entries(data).filter(
+        ([k]) => !["items","consultants","schedules","holidays"].includes(k)
+      );
+      if (extra.length) {
+        kvGrid.innerHTML = extra.map(([k, v]) =>
+          `<span class="kv-key">${k}</span><span class="kv-val">${v}</span>`
+        ).join("");
+      }
+    } catch (e) {
+      statusMsg.textContent = "Could not reach server: " + e.message;
+      statusMsg.style.color = "var(--danger, #dc3545)";
+    }
+  }
+
+  document.getElementById("btn-refresh-summary")
+    .addEventListener("click", loadSummary);
+
+  loadSummary();
+})();
+</script>
+{% endblock %}

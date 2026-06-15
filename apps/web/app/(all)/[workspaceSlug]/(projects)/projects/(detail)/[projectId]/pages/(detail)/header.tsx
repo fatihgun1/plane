@@ -64,6 +64,17 @@ export const PageDetailsHeader = observer(function PageDetailsHeader() {
 
   if (!page) return null;
 
+  // Walk the parent chain so the breadcrumb reflects the page hierarchy
+  // (oldest ancestor first). Pages without a parent yield an empty chain.
+  const ancestors = [];
+  const seen = new Set<string>();
+  let ancestor = page.parent ? getPageById(page.parent) : undefined;
+  while (ancestor?.id && !seen.has(ancestor.id)) {
+    seen.add(ancestor.id);
+    ancestors.unshift(ancestor);
+    ancestor = ancestor.parent ? getPageById(ancestor.parent) : undefined;
+  }
+
   return (
     <Header>
       <Header.LeftItem>
@@ -79,6 +90,19 @@ export const PageDetailsHeader = observer(function PageDetailsHeader() {
                 />
               }
             />
+
+            {ancestors.map((item) => (
+              <Breadcrumbs.Item
+                key={item.id}
+                component={
+                  <BreadcrumbLink
+                    label={getPageName(item.name)}
+                    href={`/${workspaceSlug}/projects/${projectId}/pages/${item.id}`}
+                    icon={<PageIcon className="h-4 w-4 text-tertiary" />}
+                  />
+                }
+              />
+            ))}
 
             <Breadcrumbs.Item
               component={

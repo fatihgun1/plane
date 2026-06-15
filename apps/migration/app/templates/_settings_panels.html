@@ -1,0 +1,243 @@
+<!-- ══════════════════════════════════════════════════════════════
+     TAB 1 — Jira Connection
+═══════════════════════════════════════════════════════════════ -->
+<section class="card tab-panel hidden" id="tab-jira">
+  <div class="card-header">
+    <h2>Jira Connection</h2>
+    <div class="card-actions">
+      <button class="btn btn-secondary" id="btn-test-jira">🔌 Test Connection</button>
+    </div>
+  </div>
+  <p class="hint" style="margin-bottom:1rem">
+    <strong>This whole Jira connection is personal</strong> — base URL, project key,
+    email and API token are stored only for your Plane account. Each user connects
+    to their own Jira.
+  </p>
+
+  <div id="jira-test-result" class="status-bar hidden"></div>
+
+  <div class="settings-grid">
+    <label class="field-label">
+      Jira Base URL
+      <input type="url" id="s-jira-base-url" placeholder="https://your-org.atlassian.net" />
+      <span class="hint">Your own Jira instance.</span>
+    </label>
+    <label class="field-label">
+      Project Key
+      <input type="text" id="s-jira-project-key" placeholder="JUM" style="max-width:180px" />
+      <span class="hint">Used as the default project filter when building JQL.</span>
+    </label>
+    <label class="field-label">
+      Your Jira Email
+      <input type="email" id="s-jira-email" placeholder="you@example.com" autocomplete="off" />
+      <span class="hint">The Atlassian account the imports/pushes run as.</span>
+    </label>
+    <label class="field-label">
+      Your Jira API Token
+      <input type="password" id="s-jira-token" placeholder="" autocomplete="new-password" />
+      <span class="hint" id="jira-token-hint">Create one at id.atlassian.com → Security → API tokens.</span>
+    </label>
+  </div>
+
+  <div class="form-actions">
+    <button class="btn btn-primary" id="btn-save-jira">💾 Save Jira Settings</button>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════════
+     TAB 2 — Field Map
+═══════════════════════════════════════════════════════════════ -->
+<section class="card tab-panel hidden" id="tab-fieldmap">
+  <div class="card-header">
+    <h2>Jira Field Map</h2>
+    <div class="card-actions">
+      <button class="btn btn-secondary" id="btn-discover-fields">🔍 Discover Custom Fields</button>
+      <button class="btn btn-primary"   id="btn-save-fieldmap">💾 Save Field Map</button>
+    </div>
+  </div>
+  <p class="hint" style="margin-bottom:.75rem">
+    Map standard field labels to Jira custom field IDs.
+    Use <em>Discover</em> to fetch available custom fields from your Jira instance.
+    Standard labels: <code>module</code>, <code>stream</code>, <code>story points</code>,
+    <code>epic link</code>, <code>planned start</code>, <code>planned end</code>.
+  </p>
+
+  <div id="discover-status" class="status-bar hidden" style="margin-bottom:.75rem"></div>
+
+  <!-- Quick-fill picker -->
+  <div id="discover-picker" class="hidden" style="margin-bottom:1rem;padding:.75rem;background:var(--surface-2,#f0f4fa);border-radius:6px">
+    <label class="field-label" style="margin:0">
+      Select a row below, then pick a discovered field to apply its ID:
+    </label>
+    <div style="display:flex;gap:.5rem;margin-top:.5rem;flex-wrap:wrap">
+      <select id="discovered-field-select" style="flex:1;min-width:220px">
+        <option value="">— choose a Jira field —</option>
+      </select>
+      <button class="btn btn-sm btn-primary" id="btn-apply-discovered">Apply to selected row</button>
+    </div>
+  </div>
+
+  <div class="table-wrap" style="margin-bottom:1rem">
+    <table class="data-table" id="fieldmap-table">
+      <thead>
+        <tr>
+          <th style="width:26%">Field Label</th>
+          <th style="width:28%">Jira Field ID</th>
+          <th>Notes</th>
+          <th style="width:170px">Plane Target</th>
+          <th style="width:48px"></th>
+        </tr>
+      </thead>
+      <tbody id="fieldmap-tbody">
+        <tr><td colspan="5" class="empty-row">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div style="display:flex;gap:.5rem;flex-wrap:wrap">
+    <button class="btn btn-secondary" id="btn-add-fieldmap-row">+ Add Row</button>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════════
+     TAB 3 — Import Defaults
+═══════════════════════════════════════════════════════════════ -->
+<section class="card tab-panel hidden" id="tab-import">
+  <div class="card-header">
+    <h2>Import Defaults</h2>
+  </div>
+  <p class="hint" style="margin-bottom:1rem">
+    These values pre-fill the Import from Jira dialog. You can still override them per import.
+  </p>
+
+  <div class="settings-grid">
+    <label class="field-label">
+      Default JQL Query
+      <textarea id="s-default-jql" rows="3"
+        placeholder='project = "JUM" AND issuetype in ("WRICEF","Enhancement") ORDER BY priority ASC'></textarea>
+      <span class="hint">Leave blank to require a JQL query each time.</span>
+    </label>
+    <label class="field-label">
+      Default Max Results
+      <input type="number" id="s-default-max-results" min="1" max="1000" value="200"
+             style="max-width:120px" />
+    </label>
+
+    <label class="field-label">
+      Issue Type Filter (comma-separated)
+      <input type="text" id="s-issue-type-filter"
+             placeholder='WRICEF, Enhancement, Story' />
+      <span class="hint">Used when building JQL from Project Key instead of free-text JQL.</span>
+    </label>
+
+    <label class="field-label">
+      Priority Field Mapping
+      <span class="hint" style="display:block;margin-bottom:.4rem">
+        Map Jira priority names → internal values (one per line: <code>JiraName=Internal</code>).
+      </span>
+      <textarea id="s-priority-map" rows="6"
+        placeholder="Highest=Critical&#10;High=High&#10;Medium=Medium&#10;Low=Low&#10;Lowest=Low"></textarea>
+    </label>
+
+    <label class="field-label">
+      Status Field Mapping
+      <span class="hint" style="display:block;margin-bottom:.4rem">
+        Map Jira status names → internal values (one per line: <code>JiraStatus=Internal</code>).
+      </span>
+      <textarea id="s-status-map" rows="6"
+        placeholder="To Do=Open&#10;In Progress=In Progress&#10;Done=Done&#10;Closed=Done"></textarea>
+    </label>
+
+    <label class="field-label">
+      Issue Type → Workflow Template
+      <span class="hint" style="display:block;margin-bottom:.4rem">
+        Map Jira issue types to workflow templates (one per line: <code>IssueType=TemplateName</code>).
+      </span>
+      <textarea id="s-type-workflow-map" rows="5"
+        placeholder="WRICEF=sap_wricef&#10;Enhancement=enhancement&#10;Story=data_migration"></textarea>
+    </label>
+  </div>
+
+  <div class="form-actions">
+    <button class="btn btn-primary" id="btn-save-import">💾 Save Import Settings</button>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════════
+     TAB 4 — Scheduler
+═══════════════════════════════════════════════════════════════ -->
+<section class="card tab-panel hidden" id="tab-scheduler">
+  <div class="card-header">
+    <h2>Scheduler Defaults</h2>
+  </div>
+  <p class="hint" style="margin-bottom:1rem">
+    Default values used when creating a new schedule run.
+    Can be overridden on the Schedule page per run.
+  </p>
+
+  <div class="settings-grid">
+    <label class="field-label">
+      Default Max Parallel Items
+      <input type="number" id="s-max-parallel" min="1" max="20" value="3"
+             style="max-width:120px" />
+      <span class="hint">Max items scheduled concurrently across consultants.</span>
+    </label>
+
+    <label class="field-label">
+      Default Daily Capacity (days)
+      <input type="number" id="s-daily-capacity" min="0.1" max="1" step="0.1" value="1.0"
+             style="max-width:120px" />
+      <span class="hint">Fraction of a working day a consultant contributes (1.0 = full day).</span>
+    </label>
+
+    <label class="field-label">
+      Effort Scale Factor
+      <input type="number" id="s-effort-scale" min="0.1" max="5" step="0.1" value="1.0"
+             style="max-width:120px" />
+      <span class="hint">Multiplier applied to all effort estimates before scheduling (e.g. 1.2 adds 20% buffer).</span>
+    </label>
+
+    <label class="field-label">
+      Priority Order
+      <span class="hint" style="display:block;margin-bottom:.4rem">
+        Comma-separated list of priority values, highest first.
+      </span>
+      <input type="text" id="s-priority-order"
+             placeholder="Critical, High, Medium, Low" />
+    </label>
+
+    <label class="field-label">
+      Consultant Role → Phase Match Rules
+      <span class="hint" style="display:block;margin-bottom:.4rem">
+        Map consultant roles to phase required_roles (one per line: <code>ConsultantRole=PhaseRole</code>).
+        Enables cross-role scheduling when roles don't match exactly.
+      </span>
+      <textarea id="s-role-match" rows="5"
+        placeholder="Senior Developer=Developer&#10;Lead Consultant=Consultant&#10;PM=Project Manager"></textarea>
+    </label>
+  </div>
+
+  <div class="form-actions">
+    <button class="btn btn-primary" id="btn-save-scheduler">💾 Save Scheduler Settings</button>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════════
+     TAB 5 — Workflow
+═══════════════════════════════════════════════════════════════ -->
+<section class="card tab-panel hidden" id="tab-workflow">
+  <div class="card-header">
+    <h2>Workflow Configuration</h2>
+    <div class="card-actions">
+      <button class="btn btn-secondary" id="btn-reload-workflows">↺ Reload</button>
+      <button class="btn btn-primary"   id="btn-save-workflows">💾 Save Changes</button>
+    </div>
+  </div>
+  <p class="hint" style="margin-bottom:1rem">
+    For each <strong>Activity</strong> (workflow template), define which Jira issue types map to it
+    and configure the effort % per phase. Leave issue types blank if the activity is not used.
+    Effort % does not need to sum to 100% — you can leave buffer.
+  </p>
+  <div id="workflow-status" class="status-bar hidden" style="margin-bottom:.75rem"></div>
+  <div id="workflow-panels" style="display:flex;flex-direction:column;gap:1.5rem"></div>
+</section>

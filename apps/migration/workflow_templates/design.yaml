@@ -1,0 +1,32 @@
+# workflow_templates/design.yaml
+# Design activity workflow.
+# Covers the analysis and scoping phases before any development starts.
+#
+# applies_to: Jira issue types that map to this activity.
+# User configures the mapping in Settings → Workflow → Issue Type Mapping.
+
+template_name: design
+
+applies_to: []  # Populated via Settings → Issue Type Mapping
+
+phases:
+  - order: 1
+    name: "Analysis"
+    required_roles:
+      - Functional
+    effort_factor: 0.30
+    is_blocking: true
+
+  - order: 2
+    name: "Fit-GAP"
+    required_roles:
+      - Functional
+    effort_factor: 0.50
+    is_blocking: true
+
+  - order: 3
+    name: "Open Issue Closure"
+    required_roles:
+      - Functional
+    effort_factor: 0.20
+    is_blocking: true

@@ -1,0 +1,40 @@
+# workflow_templates/testing.yaml
+# Testing activity workflow.
+# Must not start before Development, Data Migration, and Authorization are complete.
+
+template_name: testing
+
+applies_to: []  # Populated via Settings → Issue Type Mapping
+
+phases:
+  - order: 1
+    name: "SIT Plan"
+    required_roles:
+      - Functional
+      - QA
+    effort_factor: 0.15
+    is_blocking: true
+
+  - order: 2
+    name: "SIT Execute"
+    required_roles:
+      - Functional
+      - QA
+    effort_factor: 0.25
+    is_blocking: true
+
+  - order: 3
+    name: "UAT Plan"
+    required_roles:
+      - Functional
+      - Client
+    effort_factor: 0.15
+    is_blocking: true
+
+  - order: 4
+    name: "UAT Execute"
+    required_roles:
+      - Functional
+      - Client
+    effort_factor: 0.45
+    is_blocking: true

@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sign in — NTT-PMO Optimization Tool</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <main class="login-page">
+    <form class="login-card" id="login-form">
+      <span class="logo-text">NTT DATA</span>
+      <h1>PMO Optimization Tool</h1>
+      <p class="hint">Sign in with your Plane account to continue.</p>
+
+      <div class="login-error hidden" id="login-error"></div>
+
+      <label class="field-label">
+        Email
+        <input type="email" id="login-email" autocomplete="email" required autofocus />
+      </label>
+      <label class="field-label">
+        Password
+        <input type="password" id="login-password" autocomplete="current-password" required />
+      </label>
+
+      <button type="submit" class="btn btn-primary" id="login-submit">Sign in</button>
+    </form>
+  </main>
+
+  <script>
+    const base = {{ request.script_root | tojson }};
+    // Only same-site relative paths — prevents open redirects
+    const rawNext = new URLSearchParams(location.search).get("next") || "";
+    const nextUrl = (rawNext.startsWith("/") && !rawNext.startsWith("//")) ? rawNext : base + "/";
+    const errEl = document.getElementById("login-error");
+
+    document.getElementById("login-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      errEl.classList.add("hidden");
+      const btn = document.getElementById("login-submit");
+      btn.disabled = true;
+      try {
+        // The app relays these to the Plane API server-side, so the login
+        // flow works with or without the reverse proxy in front.
+        const { csrf_token } = await fetch(base + "/auth/csrf", { credentials: "same-origin" })
+          .then(r => r.json());
+        const fd = new FormData();
+        fd.append("csrfmiddlewaretoken", csrf_token);
+        fd.append("email", document.getElementById("login-email").value.trim());
+        fd.append("password", document.getElementById("login-password").value);
+        const res = await fetch(base + "/auth/sign-in", {
+          method: "POST", body: fd, credentials: "same-origin",
+        }).then(r => r.json());
+        if (!res.success) throw new Error("Sign-in failed — check your email and password. (code " + res.error_code + ")");
+        window.location.assign(nextUrl);
+      } catch (err) {
+        errEl.textContent = err.message;
+        errEl.classList.remove("hidden");
+        btn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

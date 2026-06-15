@@ -74,8 +74,10 @@ export class ProjectPageStore implements IProjectPageStore {
   error: TError | undefined = undefined;
   filters: TPageFilters = {
     searchQuery: "",
-    sortKey: "updated_at",
-    sortBy: "desc",
+    // created_at (not updated_at) so visiting a page — which bumps updated_at via
+    // the collab save — does not reorder the list / jump the item to the top.
+    sortKey: "created_at",
+    sortBy: "asc",
   };
   // service
   service: ProjectPageService;
