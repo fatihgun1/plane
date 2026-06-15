@@ -77,6 +77,10 @@ services:
     command: ./bin/docker-entrypoint-api.sh
     env_file:
       - .env
+    environment:
+      # Override the shared PORT (which is 3000 for the live server) — gunicorn
+      # must bind 8000 because the proxy routes /api -> api:8000.
+      PORT: "8000"
     depends_on:
       - plane-db
       - plane-redis
