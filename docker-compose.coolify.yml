@@ -4,10 +4,20 @@
 #  - The internal Caddy `proxy` does all path routing (/, /api, /live, /spaces,
 #    /god-mode, /migrate, /uploads) and listens HTTP-only on :80 (SITE_ADDRESS=:80).
 #  - Coolify's own reverse proxy terminates SSL and routes your domain -> proxy:80.
-#    In Coolify: open the `proxy` service, set its Domain to https://<your-domain>
-#    with port 80. SSL is issued by Coolify automatically.
-#  - All env vars are set in Coolify's "Environment Variables" UI (see .env below);
-#    Coolify writes them to a .env that these services read via `env_file`.
+#    In Coolify: set the domain ONLY on the `proxy` service (port 80); leave every
+#    other service's domain blank. SSL is issued by Coolify automatically.
+#  - All env vars are set in Coolify's "Environment Variables" UI; Coolify writes
+#    them to a .env that these services read via `env_file`.
+#
+# RESOURCES (sized for an ~8GB / 2-4 vCPU host):
+#  - The `deploy.resources` blocks below cap RUNTIME memory/cpu so no single
+#    service can exhaust the host. Runtime limits sum to ~6.6GB, leaving headroom.
+#  - They do NOT limit the BUILD step. Building web/admin/space from source is
+#    memory-heavy and is what froze the server. Add swap BEFORE deploying:
+#      sudo fallocate -l 8G /swapfile && sudo chmod 600 /swapfile
+#      sudo mkswap /swapfile && sudo swapon /swapfile
+#      echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+#    (Or build images in CI and pull them, so the host never builds.)
 services:
   web:
     container_name: web
@@ -19,6 +29,10 @@ services:
     restart: always
     depends_on:
       - api
+    deploy:
+      resources:
+        limits: { memory: 512M, cpus: "1.0" }
+        reservations: { memory: 128M }
 
   admin:
     container_name: admin
@@ -31,6 +45,10 @@ services:
     depends_on:
       - api
       - web
+    deploy:
+      resources:
+        limits: { memory: 384M, cpus: "0.75" }
+        reservations: { memory: 64M }
 
   space:
     container_name: space
@@ -43,6 +61,10 @@ services:
     depends_on:
       - api
       - web
+    deploy:
+      resources:
+        limits: { memory: 384M, cpus: "0.75" }
+        reservations: { memory: 64M }
 
   api:
     container_name: api
@@ -59,6 +81,10 @@ services:
       - plane-db
       - plane-redis
       - plane-mq
+    deploy:
+      resources:
+        limits: { memory: 1024M, cpus: "1.5" }
+        reservations: { memory: 256M }
 
   worker:
     container_name: bgworker
@@ -76,6 +102,10 @@ services:
       - plane-db
       - plane-redis
       - plane-mq
+    deploy:
+      resources:
+        limits: { memory: 768M, cpus: "1.0" }
+        reservations: { memory: 256M }
 
   beat-worker:
     container_name: beatworker
@@ -93,6 +123,10 @@ services:
       - plane-db
       - plane-redis
       - plane-mq
+    deploy:
+      resources:
+        limits: { memory: 256M, cpus: "0.5" }
+        reservations: { memory: 64M }
 
   migrator:
     container_name: plane-migrator
@@ -108,6 +142,9 @@ services:
     depends_on:
       - plane-db
       - plane-redis
+    deploy:
+      resources:
+        limits: { memory: 512M, cpus: "1.0" }
 
   live:
     container_name: plane-live
@@ -121,6 +158,10 @@ services:
       - .env
     depends_on:
       - api
+    deploy:
+      resources:
+        limits: { memory: 512M, cpus: "1.0" }
+        reservations: { memory: 128M }
 
   migration:
     container_name: migration
@@ -139,6 +180,10 @@ services:
       - migration_data:/data
     depends_on:
       - api
+    deploy:
+      resources:
+        limits: { memory: 384M, cpus: "0.75" }
+        reservations: { memory: 64M }
 
   plane-db:
     container_name: plane-db
@@ -152,6 +197,10 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       PGDATA: /var/lib/postgresql/data
+    deploy:
+      resources:
+        limits: { memory: 1024M, cpus: "1.0" }
+        reservations: { memory: 256M }
 
   plane-redis:
     container_name: plane-redis
@@ -159,6 +208,10 @@ services:
     restart: always
     volumes:
       - redisdata:/data
+    deploy:
+      resources:
+        limits: { memory: 384M, cpus: "0.5" }
+        reservations: { memory: 64M }
 
   plane-mq:
     container_name: plane-mq
@@ -170,6 +223,10 @@ services:
       RABBITMQ_DEFAULT_VHOST: ${RABBITMQ_VHOST}
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
+    deploy:
+      resources:
+        limits: { memory: 512M, cpus: "0.75" }
+        reservations: { memory: 128M }
 
   plane-minio:
     container_name: plane-minio
@@ -181,6 +238,10 @@ services:
     environment:
       MINIO_ROOT_USER: ${AWS_ACCESS_KEY_ID}
       MINIO_ROOT_PASSWORD: ${AWS_SECRET_ACCESS_KEY}
+    deploy:
+      resources:
+        limits: { memory: 512M, cpus: "0.5" }
+        reservations: { memory: 128M }
 
   proxy:
     container_name: proxy
@@ -206,6 +267,10 @@ services:
       - admin
       - live
       - migration
+    deploy:
+      resources:
+        limits: { memory: 192M, cpus: "0.5" }
+        reservations: { memory: 32M }
 
 volumes:
   pgdata:
