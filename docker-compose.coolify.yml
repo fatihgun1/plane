@@ -1,0 +1,215 @@
+# Plane CE (+ Jira/Confluence migration app) — Coolify deployment.
+#
+# How it works on Coolify:
+#  - The internal Caddy `proxy` does all path routing (/, /api, /live, /spaces,
+#    /god-mode, /migrate, /uploads) and listens HTTP-only on :80 (SITE_ADDRESS=:80).
+#  - Coolify's own reverse proxy terminates SSL and routes your domain -> proxy:80.
+#    In Coolify: open the `proxy` service, set its Domain to https://<your-domain>
+#    with port 80. SSL is issued by Coolify automatically.
+#  - All env vars are set in Coolify's "Environment Variables" UI (see .env below);
+#    Coolify writes them to a .env that these services read via `env_file`.
+services:
+  web:
+    container_name: web
+    build:
+      context: .
+      dockerfile: ./apps/web/Dockerfile.web
+      args:
+        DOCKER_BUILDKIT: 1
+    restart: always
+    depends_on:
+      - api
+
+  admin:
+    container_name: admin
+    build:
+      context: .
+      dockerfile: ./apps/admin/Dockerfile.admin
+      args:
+        DOCKER_BUILDKIT: 1
+    restart: always
+    depends_on:
+      - api
+      - web
+
+  space:
+    container_name: space
+    build:
+      context: .
+      dockerfile: ./apps/space/Dockerfile.space
+      args:
+        DOCKER_BUILDKIT: 1
+    restart: always
+    depends_on:
+      - api
+      - web
+
+  api:
+    container_name: api
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile.api
+      args:
+        DOCKER_BUILDKIT: 1
+    restart: always
+    command: ./bin/docker-entrypoint-api.sh
+    env_file:
+      - .env
+    depends_on:
+      - plane-db
+      - plane-redis
+      - plane-mq
+
+  worker:
+    container_name: bgworker
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile.api
+      args:
+        DOCKER_BUILDKIT: 1
+    restart: always
+    command: ./bin/docker-entrypoint-worker.sh
+    env_file:
+      - .env
+    depends_on:
+      - api
+      - plane-db
+      - plane-redis
+      - plane-mq
+
+  beat-worker:
+    container_name: beatworker
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile.api
+      args:
+        DOCKER_BUILDKIT: 1
+    restart: always
+    command: ./bin/docker-entrypoint-beat.sh
+    env_file:
+      - .env
+    depends_on:
+      - api
+      - plane-db
+      - plane-redis
+      - plane-mq
+
+  migrator:
+    container_name: plane-migrator
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile.api
+      args:
+        DOCKER_BUILDKIT: 1
+    restart: "no"
+    command: ./bin/docker-entrypoint-migrator.sh
+    env_file:
+      - .env
+    depends_on:
+      - plane-db
+      - plane-redis
+
+  live:
+    container_name: plane-live
+    build:
+      context: .
+      dockerfile: ./apps/live/Dockerfile.live
+      args:
+        DOCKER_BUILDKIT: 1
+    restart: always
+    env_file:
+      - .env
+    depends_on:
+      - api
+
+  migration:
+    container_name: migration
+    build:
+      context: ./apps/migration
+      dockerfile: Dockerfile.migration
+      args:
+        DOCKER_BUILDKIT: 1
+    restart: always
+    environment:
+      URL_PREFIX: /migrate
+      DB_PATH: /data/optimization.db
+      SECRET_KEY: ${FLASK_SECRET_KEY}
+      PLANE_API_URL: http://api:8000
+    volumes:
+      - migration_data:/data
+    depends_on:
+      - api
+
+  plane-db:
+    container_name: plane-db
+    image: postgres:15.7-alpine
+    restart: always
+    command: postgres -c 'max_connections=1000'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      PGDATA: /var/lib/postgresql/data
+
+  plane-redis:
+    container_name: plane-redis
+    image: valkey/valkey:7.2.11-alpine
+    restart: always
+    volumes:
+      - redisdata:/data
+
+  plane-mq:
+    container_name: plane-mq
+    image: rabbitmq:3.13.6-management-alpine
+    restart: always
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+      RABBITMQ_DEFAULT_VHOST: ${RABBITMQ_VHOST}
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+
+  plane-minio:
+    container_name: plane-minio
+    image: minio/minio
+    restart: always
+    command: server /export --console-address ":9090"
+    volumes:
+      - uploads:/export
+    environment:
+      MINIO_ROOT_USER: ${AWS_ACCESS_KEY_ID}
+      MINIO_ROOT_PASSWORD: ${AWS_SECRET_ACCESS_KEY}
+
+  proxy:
+    container_name: proxy
+    build:
+      context: ./apps/proxy
+      dockerfile: Dockerfile.ce
+    restart: always
+    # No host ports — Coolify's reverse proxy owns 80/443 and routes your
+    # domain to this service's port 80. Set the domain on THIS service in Coolify.
+    expose:
+      - "80"
+    environment:
+      # Set this in Coolify to your domain, e.g. https://plane.example.com
+      SERVICE_FQDN_PROXY_80: ${SITE_FQDN}
+      SITE_ADDRESS: ":80"
+      FILE_SIZE_LIMIT: ${FILE_SIZE_LIMIT:-5242880}
+      BUCKET_NAME: ${AWS_S3_BUCKET_NAME:-uploads}
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-0.0.0.0/0}
+    depends_on:
+      - web
+      - api
+      - space
+      - admin
+      - live
+      - migration
+
+volumes:
+  pgdata:
+  redisdata:
+  uploads:
+  rabbitmq_data:
+  migration_data:
